@@ -1,0 +1,55 @@
+{
+  "name": "io.complyance/unify-sdk",
+  "description": "PHP SDK for Complyance E-invoicing platform - Multi-country compliance management",
+  "type": "library",
+  "license": "Apache-2.0",
+  "version": "3.0.0",
+  "authors": [
+    {
+      "name": "Complyance Team",
+      "email": "support@complyance.io"
+    }
+  ],
+  "homepage": "https://github.com/complyance-io/complyance-php-sdk",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/complyance-io/complyance-php-sdk.git"
+  },
+  "keywords": [
+    "e-invoicing",
+    "compliance",
+    "tax",
+    "invoice",
+    "ZATCA",
+    "LHDN",
+    "Malaysia",
+    "Saudi Arabia"
+  ],
+  "require": {
+    "php": ">=7.4",
+    "ext-json": "*",
+    "ext-curl": "*"
+  },
+  "require-dev": {
+    "phpunit/phpunit": "^9.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "ComplyanceSDK\\": "src/ComplyanceSDK/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "ComplyanceSDK\\Tests\\": "tests/"
+    }
+  },
+  "scripts": {
+    "test": "phpunit"
+  },
+  "config": {
+    "sort-packages": true,
+    "optimize-autoloader": true
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}

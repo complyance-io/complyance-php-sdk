@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/9.5/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         verbose="true"
+         cacheResult="false"
+         failOnWarning="true"
+         failOnRisky="true">
+    <testsuites>
+        <testsuite name="Unit">
+            <directory>tests</directory>
+            <exclude>tests/Integration</exclude>
+            <exclude>tests/Performance</exclude>
+        </testsuite>
+        <testsuite name="Integration">
+            <directory>tests/Integration</directory>
+        </testsuite>
+        <testsuite name="Performance">
+            <directory>tests/Performance</directory>
+        </testsuite>
+        <testsuite name="All">
+            <directory>tests</directory>
+        </testsuite>
+    </testsuites>
+    <coverage processUncoveredFiles="true">
+        <include>
+            <directory suffix=".php">src</directory>
+        </include>
+        <exclude>
+            <directory suffix=".php">src/Laravel/config</directory>
+            <directory suffix=".php">src/Symfony/Resources</directory>
+        </exclude>
+        <report>
+            <html outputDirectory="coverage/html"/>
+            <clover outputFile="coverage/clover.xml"/>
+            <text outputFile="coverage/coverage.txt"/>
+            <xml outputDirectory="coverage/xml"/>
+            <crap4j outputFile="coverage/crap4j.xml" threshold="50"/>
+        </report>
+    </coverage>
+    <logging>
+        <junit outputFile="coverage/junit.xml"/>
+        <testdoxHtml outputFile="coverage/testdox.html"/>
+        <testdoxText outputFile="coverage/testdox.txt"/>
+    </logging>
+    <php>
+        <env name="APP_ENV" value="testing"/>
+        <ini name="memory_limit" value="512M"/>
+    </php>
+</phpunit>
