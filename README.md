@@ -7,7 +7,7 @@ The official PHP SDK for the Complyance Unified e-invoicing platform.
 You can install the SDK via Composer:
 
 ```bash
-composer require io.complyance/unify-sdk
+composer require complyance/sdk
 ```
 
 ## Basic Usage

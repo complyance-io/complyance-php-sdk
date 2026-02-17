@@ -115,25 +115,108 @@ class Environment
         ]);
     }
 
+    private static $cachedEnvValue = null;
+    private static $envValueLoaded = false;
+
     /**
      * Get base URL for environment
+     * URLs are dynamically constructed based on the ENV environment variable.
+     * If ENV is set to "dev", "test", or "stage", that subdomain is used.
+     * If not set, defaults to "prod" (production).
+     * LOCAL environment always uses localhost.
      * 
      * @param string $code Environment code
      * @return string Base URL
      */
     public static function getBaseUrlForCode($code)
     {
-        $urls = [
-            self::DEV => 'https://prod.gets.complyance.io/unify',
-            self::TEST => 'https://prod.gets.complyance.io/unify',
-            self::STAGE => 'https://prod.gets.complyance.io/unify',
-            self::LOCAL => 'http://127.0.0.1:4000/unify',
-            self::SANDBOX => 'https://prod.gets.complyance.io/unify',     // Maps to DEV URL
-            self::SIMULATION => 'https://prod.gets.complyance.io/unify',   // Maps to PROD URL
-            self::PRODUCTION => 'https://prod.gets.complyance.io/unify'   // Production URL
+        if ($code === self::LOCAL) {
+            return 'http://127.0.0.1:4000/unify';
+        }
+
+        $envValue = self::getEnvValue();
+        $subdomain = ($envValue && trim($envValue)) ? strtolower(trim($envValue)) : 'prod';
+        return "https://{$subdomain}.gets.complyance.io/unify";
+    }
+
+    /**
+     * Gets the ENV value from system environment variable or .env files
+     * 
+     * @return string|null The ENV value or null if not found
+     */
+    private static function getEnvValue()
+    {
+        if (self::$envValueLoaded) {
+            return self::$cachedEnvValue;
+        }
+
+        // First, check system environment variable
+        $envValue = getenv('ENV');
+        if ($envValue && trim($envValue)) {
+            self::$cachedEnvValue = $envValue;
+            self::$envValueLoaded = true;
+            return $envValue;
+        }
+
+        // Try to read from .env files in common locations
+        $envFilePaths = [
+            '.env',
+            '../.env',
+            '../../.env',
+            '../services/encore/.env',
+            '../../services/encore/.env',
+            'services/encore/.env'
         ];
 
-        return isset($urls[$code]) ? $urls[$code] : 'https://prod.gets.complyance.io/unify';
+        foreach ($envFilePaths as $filePath) {
+            $envValue = self::readEnvFromFile($filePath);
+            if ($envValue && trim($envValue)) {
+                self::$cachedEnvValue = $envValue;
+                self::$envValueLoaded = true;
+                return $envValue;
+            }
+        }
+
+        // No ENV found, cache null and return null
+        self::$envValueLoaded = true;
+        self::$cachedEnvValue = null;
+        return null;
+    }
+
+    /**
+     * Reads the ENV variable from a .env file
+     * 
+     * @param string $filePath Path to the .env file
+     * @return string|null The ENV value or null if not found
+     */
+    private static function readEnvFromFile($filePath)
+    {
+        if (!file_exists($filePath) || !is_file($filePath)) {
+            return null;
+        }
+
+        try {
+            $lines = file($filePath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+            foreach ($lines as $line) {
+                $line = trim($line);
+                if (empty($line) || strpos($line, '#') === 0) {
+                    continue;
+                }
+
+                if (strpos($line, 'ENV=') === 0) {
+                    $value = trim(substr($line, 4));
+                    if ((substr($value, 0, 1) === '"' && substr($value, -1) === '"') ||
+                        (substr($value, 0, 1) === "'" && substr($value, -1) === "'")) {
+                        $value = substr($value, 1, -1);
+                    }
+                    return $value;
+                }
+            }
+        } catch (Exception $e) {
+            // Silently ignore - file might not be readable
+        }
+
+        return null;
     }
 
     /**

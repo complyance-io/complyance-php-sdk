@@ -53,6 +53,8 @@ class LogicalDocType
     const EXPORT_INVOICE = 'EXPORT_INVOICE';
     const EXPORT_CREDIT_NOTE = 'EXPORT_CREDIT_NOTE';
     const EXPORT_THIRD_PARTY_INVOICE = 'EXPORT_THIRD_PARTY_INVOICE';
+    const THIRD_PARTY_INVOICE = 'THIRD_PARTY_INVOICE';
+    const SUMMARY_INVOICE = 'SUMMARY_INVOICE';
     const NOMINAL_SUPPLY_INVOICE = 'NOMINAL_SUPPLY_INVOICE';
 
     private $code;
@@ -108,6 +110,8 @@ class LogicalDocType
             self::EXPORT_INVOICE => 'Export Invoice',
             self::EXPORT_CREDIT_NOTE => 'Export Credit Note',
             self::EXPORT_THIRD_PARTY_INVOICE => 'Export Third Party Invoice',
+            self::THIRD_PARTY_INVOICE => 'Third Party Invoice',
+            self::SUMMARY_INVOICE => 'Summary Invoice',
             self::NOMINAL_SUPPLY_INVOICE => 'Nominal Supply Invoice',
         ];
 

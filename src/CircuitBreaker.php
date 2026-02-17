@@ -11,7 +11,7 @@ use Psr\Log\NullLogger;
  */
 class CircuitBreaker {
     use LoggerAwareTrait;
-
+//
     private const STATE_CLOSED = 'CLOSED';
     private const STATE_OPEN = 'OPEN';
     private const STATE_HALF_OPEN = 'HALF_OPEN';

@@ -1,5 +1,5 @@
 {
-  "name": "io.complyance/unify-sdk",
+  "name": "complyance/unify-sdk",
   "description": "PHP SDK for Complyance E-invoicing platform - Multi-country compliance management",
   "type": "library",
   "license": "Apache-2.0",
@@ -10,11 +10,7 @@
       "email": "support@complyance.io"
     }
   ],
-  "homepage": "https://github.com/complyance-io/complyance-php-sdk",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/complyance-io/complyance-php-sdk.git"
-  },
+  "homepage": "https://github.com/complyance-io/complyance-unified",
   "keywords": [
     "e-invoicing",
     "compliance",
@@ -28,7 +24,8 @@
   "require": {
     "php": ">=7.4",
     "ext-json": "*",
-    "ext-curl": "*"
+    "ext-curl": "*",
+    "psr/log": "^1.1 || ^2.0 || ^3.0"
   },
   "require-dev": {
     "phpunit/phpunit": "^9.0"

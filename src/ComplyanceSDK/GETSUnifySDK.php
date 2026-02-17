@@ -684,6 +684,16 @@ class GETSUnifySDK
      * @param Environment $environment Current environment
      * @throws ValidationException
      */
+    /**
+     * Validate country restrictions based on current environment.
+     * Implements the three-tier country access control:
+     * - SA: Allowed in all production environments (SANDBOX, SIMULATION, PRODUCTION)
+     * - MY: Allowed in SANDBOX and PRODUCTION only (blocked in SIMULATION)
+     * - BE: Allowed in SANDBOX and PRODUCTION only (blocked in SIMULATION)
+     * - DE: Allowed in SANDBOX and PRODUCTION only (blocked in SIMULATION)
+     * - AE: Allowed in SANDBOX and PRODUCTION only (blocked in SIMULATION)
+     * - Others: Blocked in all production environments
+     */
     private static function validateCountryForEnvironment(Country $country, Environment $environment)
     {
         $productionEnvironments = [
@@ -709,10 +719,43 @@ class GETSUnifySDK
                 return;
             }
 
+            // BE is only allowed in SANDBOX and PRODUCTION (not SIMULATION)
+            if ($country === Country::BE) {
+                if ($environment === Environment::SIMULATION) {
+                    throw new ValidationException(
+                        'Country not allowed for simulation environment',
+                        'BE (Belgium) is not allowed in SIMULATION environment. Use SANDBOX or PRODUCTION.'
+                    );
+                }
+                return;
+            }
+
+            // DE is only allowed in SANDBOX and PRODUCTION (not SIMULATION)
+            if ($country === Country::DE) {
+                if ($environment === Environment::SIMULATION) {
+                    throw new ValidationException(
+                        'Country not allowed for simulation environment',
+                        'DE (Germany) is not allowed in SIMULATION environment. Use SANDBOX or PRODUCTION.'
+                    );
+                }
+                return;
+            }
+
+            // AE (UAE) is only allowed in SANDBOX and PRODUCTION (not SIMULATION)
+            if ($country === Country::AE) {
+                if ($environment === Environment::SIMULATION) {
+                    throw new ValidationException(
+                        'Country not allowed for simulation environment',
+                        'AE (UAE) is not allowed in SIMULATION environment. Use SANDBOX or PRODUCTION.'
+                    );
+                }
+                return;
+            }
+
             // All other countries are blocked in production environments
             throw new ValidationException(
                 'Country not allowed for production environment',
-                'Only SA and MY are allowed for ' . $environment->getCode() . '. Use DEV/TEST/STAGE for other countries.'
+                'Only SA, MY, BE, DE, and AE are allowed for ' . $environment->getCode() . '. Use DEV/TEST/STAGE for other countries.'
             );
         }
     }

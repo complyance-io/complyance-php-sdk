@@ -125,13 +125,14 @@ class Country
 
     /**
      * Check if country is supported for production
-     * 
+     * SA, MY, and AE (UAE) are allowed in SANDBOX/PRODUCTION; AE not in SIMULATION.
+     *
      * @param string $code Country code
      * @return bool True if supported for production
      */
     public static function isProductionSupported($code)
     {
-        return in_array($code, [self::SA, self::MY]);
+        return in_array($code, [self::SA, self::MY, self::AE]);
     }
 
     /**
