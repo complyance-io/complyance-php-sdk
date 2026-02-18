@@ -5,7 +5,7 @@
 
 set -e
 
-VERSION=${1:-"3.0.0"}
+VERSION=${1:-"3.0.1"}
 REPO_NAME="complyance-php-sdk"
 GITHUB_ORG="complyance-io"
 PUBLIC_REPO_URL="https://github.com/${GITHUB_ORG}/${REPO_NAME}.git"
