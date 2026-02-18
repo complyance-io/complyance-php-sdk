@@ -1,5 +1,5 @@
 {
-  "name": "complyance/unify-sdk",
+  "name": "io.complyance/unify-sdk",
   "description": "PHP SDK for Complyance E-invoicing platform - Multi-country compliance management",
   "type": "library",
   "license": "Apache-2.0",
