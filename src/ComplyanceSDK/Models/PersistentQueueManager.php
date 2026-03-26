@@ -116,7 +116,9 @@ class PersistentQueueManager
                         continue;
                     }
                     // Lock is stale, remove it
-                    unlink($lockFile);
+                    if (!@unlink($lockFile) && file_exists($lockFile)) {
+                        error_log("Warning: failed to remove stale lock file: " . $lockFile);
+                    }
                 }
 
                 // Check file age
@@ -321,6 +323,13 @@ class PersistentQueueManager
 
     private function scheduleBackgroundProcessing()
     {
+        // For CLI/sdk sample runs, avoid daemonizing a detached child process.
+        // It can outlive the parent command and emit stale warnings later.
+        if (PHP_SAPI === 'cli') {
+            $this->processPendingSubmissions();
+            return;
+        }
+
         // Simple background processing using a loop
         // In production, you'd want to use a proper task scheduler or background worker
         if (function_exists('pcntl_fork')) {
@@ -475,8 +484,8 @@ class PersistentQueueManager
                 fclose($handle);
                 unset($this->lockHandles[$lockFile]);
 
-                if (file_exists($lockFile)) {
-                    unlink($lockFile);
+                if (file_exists($lockFile) && !@unlink($lockFile) && file_exists($lockFile)) {
+                    error_log("Warning: failed to remove lock file: " . $lockFile);
                 }
             }
         } catch (\Exception $e) {
@@ -829,7 +838,10 @@ class PersistentQueueManager
         if (is_dir($dir)) {
             $files = glob($dir . '/*.json');
             foreach ($files as $file) {
-                unlink($file);
+                if (!@unlink($file) && file_exists($file)) {
+                    error_log("Warning: failed to delete file: " . basename($file));
+                    continue;
+                }
                 error_log("Deleted file: " . basename($file));
             }
             error_log("Cleared " . count($files) . " files from " . $dirName);

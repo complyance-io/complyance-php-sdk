@@ -192,7 +192,10 @@ class APIClient
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $error = curl_error($ch);
         
-        curl_close($ch);
+        // PHP 8.5 deprecates curl_close() as a no-op; keep it for older runtimes only.
+        if (PHP_VERSION_ID < 80500) {
+            curl_close($ch);
+        }
         
         // Handle cURL errors
         if ($responseBody === false || !empty($error)) {

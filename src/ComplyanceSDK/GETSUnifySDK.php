@@ -11,6 +11,9 @@ use ComplyanceSDK\Models\SourceRef;
 use ComplyanceSDK\Models\Destination;
 use ComplyanceSDK\Models\CountryPolicyRegistry;
 use ComplyanceSDK\Models\PolicyResult;
+use ComplyanceSDK\Models\GetsDocumentTypeV2;
+use ComplyanceSDK\Models\GetsDocumentBase;
+use ComplyanceSDK\Models\LogicalDocTypeMapper;
 use ComplyanceSDK\Models\PersistentQueueManager;
 use ComplyanceSDK\Models\StatusManager;
 use ComplyanceSDK\Models\CircuitBreaker;
@@ -264,27 +267,67 @@ class GETSUnifySDK
             ));
         }
 
-        // Validate country restrictions for current environment
-        self::validateCountryForEnvironment($country, self::$config->getEnvironment());
+        $documentTypeV2 = LogicalDocTypeMapper::toGetsDocumentTypeV2($logicalType);
+        return self::pushToUnifyV2(
+            $finalSourceName,
+            $finalSourceVersion,
+            $documentTypeV2,
+            $country,
+            $operation,
+            $mode,
+            $purpose,
+            $payload,
+            $destinations
+        );
+    }
 
-        // Evaluate country policy to get base document type and meta.config flags
-        $policy = CountryPolicyRegistry::evaluate($country, $logicalType);
-        
-        // Merge meta.config flags into payload
-        $mergedPayload = self::deepMergeIntoMetaConfig($payload, $policy->getMetaConfigFlags());
-        
-        // Auto-set invoice_data.document_type based on LogicalDocType
-        self::setInvoiceDataDocumentType($mergedPayload, $logicalType);
-        
-        // Create source reference
-        $sourceRef = new SourceRef($finalSourceName, $finalSourceVersion);
-        
-        // Auto-generate destinations if none provided and auto-generation is enabled
-        $finalDestinations = $destinations !== null ? $destinations : 
-            (self::$config->isAutoGenerateTaxDestination() ? self::generateDefaultDestinations($country->getCode(), $policy->getDocumentType()) : []);
-        
-        // Build and send request using the resolved base document type
-        return self::pushToUnifyInternalWithDocumentType($sourceRef, $policy->getBaseType(), self::getMetaConfigDocumentType($logicalType), $country, $operation, $mode, $purpose, $mergedPayload, $finalDestinations);
+    public static function pushToUnifyV2(
+        $sourceName,
+        $sourceVersion,
+        GetsDocumentTypeV2 $documentTypeV2,
+        Country $country,
+        Operation $operation,
+        Mode $mode,
+        Purpose $purpose,
+        array $payload,
+        $destinations = null
+    ) {
+        if (self::$config === null) {
+            throw \ComplyanceSDK\Exceptions\SDKException::fromErrorDetail(new \ComplyanceSDK\Models\ErrorDetail(
+                \ComplyanceSDK\Enums\ErrorCode::MISSING_FIELD,
+                "SDK not configured",
+                "Call GETSUnifySDK.configure() first."
+            ));
+        }
+
+        self::validateCountryForEnvironment($country, self::$config->getEnvironment());
+        $normalized = self::normalizeAndValidateDocumentTypeV2($documentTypeV2);
+        // Keep V2 payload free of meta.config injection, but enforce normalized V2
+        // shape markers so backend does not downgrade to schema v1.
+        $mergedPayload = $payload;
+        $mergedPayload['documentType'] = $normalized->toArray();
+        self::setInvoiceDataDocumentTypeFromV2($mergedPayload, $normalized->getBase());
+
+        $sourceRef = new SourceRef((string)$sourceName, (string)$sourceVersion);
+        $documentTypeString = $normalized->getBase();
+        $baseDocumentType = self::resolveBaseDocumentTypeFromV2($documentTypeString);
+        $finalDestinations = $destinations !== null ? $destinations :
+            (self::$config->isAutoGenerateTaxDestination()
+                ? self::generateDefaultDestinations($country->getCode(), $documentTypeString)
+                : []);
+
+        return self::pushToUnifyInternalWithDocumentType(
+            $sourceRef,
+            $baseDocumentType,
+            $documentTypeString,
+            $country,
+            $operation,
+            $mode,
+            $purpose,
+            $mergedPayload,
+            $finalDestinations,
+            $normalized
+        );
     }
 
     /**
@@ -1112,6 +1155,95 @@ class GETSUnifySDK
             return "tax_invoice";
         }
     }
+
+    private static function normalizeAndValidateDocumentTypeV2(GetsDocumentTypeV2 $documentTypeV2): GetsDocumentTypeV2
+    {
+        $base = strtolower(trim($documentTypeV2->getBase()));
+        $allowedBases = [
+            GetsDocumentBase::TAX_INVOICE,
+            GetsDocumentBase::SIMPLIFIED_INVOICE,
+            GetsDocumentBase::CREDIT_NOTE,
+            GetsDocumentBase::DEBIT_NOTE,
+        ];
+
+        if ($base === '' || !in_array($base, $allowedBases, true)) {
+            throw \ComplyanceSDK\Exceptions\SDKException::fromErrorDetail(new \ComplyanceSDK\Models\ErrorDetail(
+                \ComplyanceSDK\Enums\ErrorCode::INVALID_ARGUMENT,
+                "Invalid GETS V2 documentType",
+                "Fix documentType.base/modifiers/variant according to country mapping rules."
+            ));
+        }
+
+        $modifiers = array_values(array_unique(array_filter(array_map(
+            static function ($modifier) {
+                return is_string($modifier) ? strtolower(trim($modifier)) : '';
+            },
+            $documentTypeV2->getModifiers()
+        ))));
+
+        return GetsDocumentTypeV2::builder()
+            ->base($base)
+            ->modifiers($modifiers)
+            ->variant($documentTypeV2->getVariant())
+            ->build();
+    }
+
+    private static function buildMetaConfigFlagsFromDocumentTypeV2(Country $country, GetsDocumentTypeV2 $documentTypeV2): array
+    {
+        $modifiers = array_map('strtolower', $documentTypeV2->getModifiers());
+        $base = strtolower(trim((string) $documentTypeV2->getBase()));
+        $has = static function (string $name) use ($modifiers): bool {
+            return in_array(strtolower($name), $modifiers, true);
+        };
+        $isB2B = ($has('b2g') || $has('b2c'))
+            ? false
+            : ($has('b2b') ? true : $base !== GetsDocumentBase::SIMPLIFIED_INVOICE);
+
+        return [
+            'country' => $country->getCode(),
+            'authority' => self::getDefaultTaxAuthority($country->getCode()) ?? 'UNKNOWN',
+            'version' => '1.0',
+            'encoding' => 'UTF-8',
+            'isExport' => $has('export'),
+            'isSelfBilled' => $has('self_billed'),
+            'isThirdParty' => $has('third_party'),
+            'isNominal' => $has('nominal_supply'),
+            'isSummary' => $has('summary'),
+            'isB2B' => $isB2B,
+            'isPrepayment' => false,
+            'isAdjusted' => false,
+            'isReceipt' => false,
+        ];
+    }
+
+    private static function setInvoiceDataDocumentTypeFromV2(array &$payload, string $base): void
+    {
+        if (!isset($payload['invoice_data']) || !is_array($payload['invoice_data'])) {
+            return;
+        }
+
+        if ($base === GetsDocumentBase::CREDIT_NOTE) {
+            $payload['invoice_data']['document_type'] = 'credit_note';
+            return;
+        }
+        if ($base === GetsDocumentBase::DEBIT_NOTE) {
+            $payload['invoice_data']['document_type'] = 'debit_note';
+            return;
+        }
+
+        $payload['invoice_data']['document_type'] = 'tax_invoice';
+    }
+
+    private static function resolveBaseDocumentTypeFromV2(string $base): DocumentType
+    {
+        if ($base === GetsDocumentBase::CREDIT_NOTE) {
+            return DocumentType::from(DocumentType::CREDIT_NOTE);
+        }
+        if ($base === GetsDocumentBase::DEBIT_NOTE) {
+            return DocumentType::from(DocumentType::DEBIT_NOTE);
+        }
+        return DocumentType::from(DocumentType::TAX_INVOICE);
+    }
     
     /**
      * Automatically sets the invoice_data.document_type field based on LogicalDocType
@@ -1188,10 +1320,11 @@ class GETSUnifySDK
         Mode $mode,
         Purpose $purpose,
         array $payload,
-        array $destinations
+        array $destinations,
+        ?GetsDocumentTypeV2 $documentTypeV2 = null
     ) {
         // Build UnifyRequest with custom document type string
-        $request = UnifyRequestBuilder::builder()
+        $requestBuilder = UnifyRequestBuilder::builder()
             ->source(self::buildSourceObject($sourceRef))
             ->documentType($baseDocumentType)
             ->documentTypeString(strtolower($documentTypeString)) // Add custom document type string
@@ -1205,8 +1338,13 @@ class GETSUnifySDK
             ->requestId("req_" . (time() * 1000) . "_" . mt_rand())
             ->timestamp(date('c'))
             ->env(strtolower(self::$config->getEnvironment()->getCode()))
-            ->correlationId(self::$config->getCorrelationId())
-            ->build();
+            ->correlationId(self::$config->getCorrelationId());
+
+        if ($documentTypeV2 !== null) {
+            $requestBuilder->documentTypeV2($documentTypeV2->toArray());
+        }
+
+        $request = $requestBuilder->build();
         
         try {
             return self::$apiClient->sendUnifyRequest($request);

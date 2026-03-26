@@ -5,7 +5,7 @@
 
 set -e
 
-VERSION=${1:-"3.0.1"}
+VERSION=${1:-"3.0.4"}
 REPO_NAME="complyance-php-sdk"
 GITHUB_ORG="complyance-io"
 PUBLIC_REPO_URL="https://github.com/${GITHUB_ORG}/${REPO_NAME}.git"
@@ -69,5 +69,3 @@ echo "2. Submit repository URL: ${PUBLIC_REPO_URL}"
 echo "3. Packagist will automatically detect version ${VERSION} from the tag"
 echo ""
 echo "🔄 For future releases, just run: ./publish.sh <version>"
-
-

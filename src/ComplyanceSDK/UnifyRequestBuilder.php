@@ -49,6 +49,12 @@ class UnifyRequestBuilder
         return $this;
     }
 
+    public function documentTypeV2(array $documentTypeV2): self
+    {
+        $this->request->documentTypeV2 = $documentTypeV2;
+        return $this;
+    }
+
     public function country(string $country): self
     {
         $this->request->country = $country;

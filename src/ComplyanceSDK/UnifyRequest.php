@@ -17,6 +17,7 @@ class UnifyRequest
     public $source;
     public $documentType;
     public $documentTypeString;
+    public $documentTypeV2;
     public $country;
     public $operation;
     public $mode;
@@ -60,6 +61,11 @@ class UnifyRequest
     public function getDocumentTypeString(): string
     {
         return $this->documentTypeString;
+    }
+
+    public function getDocumentTypeV2(): ?array
+    {
+        return $this->documentTypeV2;
     }
 
     public function getCountry(): string
@@ -133,6 +139,11 @@ class UnifyRequest
         $this->documentTypeString = $documentTypeString;
     }
 
+    public function setDocumentTypeV2(?array $documentTypeV2): void
+    {
+        $this->documentTypeV2 = $documentTypeV2;
+    }
+
     public function setCountry(string $country): void
     {
         $this->country = $country;
@@ -196,9 +207,14 @@ class UnifyRequest
      */
     public function toArray(): array
     {
+        $documentType = $this->documentTypeString;
+        if (is_array($this->documentTypeV2) && !empty($this->documentTypeV2)) {
+            $documentType = $this->documentTypeV2;
+        }
+
         return [
             'source' => $this->source,
-            'documentType' => $this->documentTypeString, // Matches Java @JsonProperty("documentType")
+            'documentType' => $documentType, // Matches Java V1/V2 @JsonProperty("documentType")
             'country' => $this->country,
             'operation' => $this->operation,
             'mode' => $this->mode,
