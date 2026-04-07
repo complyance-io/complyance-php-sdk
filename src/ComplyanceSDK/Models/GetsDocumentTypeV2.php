@@ -14,17 +14,31 @@ class GetsDocumentModifier
 {
     public const B2B = 'b2b';
     public const B2C = 'b2c';
+    public const B2G = 'b2g';
     public const EXPORT = 'export';
     public const SELF_BILLED = 'self_billed';
     public const THIRD_PARTY = 'third_party';
+    public const NOMINAL = 'nominal';
     public const NOMINAL_SUPPLY = 'nominal_supply';
     public const SUMMARY = 'summary';
-    public const B2G = 'b2g';
+    public const PREPAYMENT = 'prepayment';
+    public const ADJUSTED = 'adjusted';
+    public const RECEIPT = 'receipt';
+    public const ZERO_RATED = 'zero_rated';
+    public const REVERSE_CHARGE = 'reverse_charge';
+    public const CONTINUOUS_SUPPLY = 'continuous_supply';
+    public const FREE_TRADE_ZONE = 'free_trade_zone';
+    public const INTRA_COMMUNITY_SUPPLY = 'intra_community_supply';
+    public const CONSOLIDATED = 'consolidated';
 }
 
 class GetsDocumentVariant
 {
     public const STANDARD = 'standard';
+    public const PARTIAL = 'partial';
+    public const PARTIAL_CONSTRUCTION = 'partial_construction';
+    public const PARTIAL_FINAL_CONSTRUCTION = 'partial_final_construction';
+    public const FINAL_CONSTRUCTION = 'final_construction';
 }
 
 class BaseValue
@@ -164,6 +178,27 @@ class GetsDocumentTypeV2Builder
         }
         $this->value->setModifiers($normalized);
         return $this;
+    }
+
+    public function addModifier($modifier): self
+    {
+        if ($modifier instanceof ModifierValue) {
+            $modifier = $modifier->getValue();
+        }
+
+        if (!is_string($modifier) || trim($modifier) === '') {
+            return $this;
+        }
+
+        $existing = $this->value->getModifiers();
+        $existing[] = $modifier;
+        $this->value->setModifiers($existing);
+        return $this;
+    }
+
+    public function modifier($modifier): self
+    {
+        return $this->addModifier($modifier);
     }
 
     public function variant($variant): self

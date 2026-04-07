@@ -12,6 +12,7 @@ use ComplyanceSDK\Models\Destination;
 use ComplyanceSDK\Models\CountryPolicyRegistry;
 use ComplyanceSDK\Models\PolicyResult;
 use ComplyanceSDK\Models\GetsDocumentTypeV2;
+use ComplyanceSDK\Models\GetsDocumentType;
 use ComplyanceSDK\Models\GetsDocumentBase;
 use ComplyanceSDK\Models\LogicalDocTypeMapper;
 use ComplyanceSDK\Models\PersistentQueueManager;
@@ -327,6 +328,34 @@ class GETSUnifySDK
             $mergedPayload,
             $finalDestinations,
             $normalized
+        );
+    }
+
+    /**
+     * Canonical document type entrypoint.
+     * Keeps V2 flow internally for backward compatibility.
+     */
+    public static function pushToUnifyWithDocumentType(
+        $sourceName,
+        $sourceVersion,
+        GetsDocumentType $documentType,
+        Country $country,
+        Operation $operation,
+        Mode $mode,
+        Purpose $purpose,
+        array $payload,
+        $destinations = null
+    ) {
+        return self::pushToUnifyV2(
+            $sourceName,
+            $sourceVersion,
+            $documentType->toV2(),
+            $country,
+            $operation,
+            $mode,
+            $purpose,
+            $payload,
+            $destinations
         );
     }
 
@@ -704,6 +733,65 @@ class GETSUnifySDK
         }
     }
 
+    private static function getJson(string $path): array
+    {
+        $ch = curl_init();
+        $url = self::resolveServiceUrl($path);
+
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPGET => true,
+            CURLOPT_HTTPHEADER => [
+                'Accept: application/json',
+                'Authorization: Bearer ' . self::$config->getApiKey(),
+                'X-API-Key: ' . self::$config->getApiKey(),
+            ],
+            CURLOPT_TIMEOUT => 30,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => false,
+        ]);
+
+        $responseBody = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
+
+        if (PHP_VERSION_ID < 80500) {
+            curl_close($ch);
+        }
+
+        if ($responseBody === false || !empty($error)) {
+            throw new SDKException(new \ComplyanceSDK\Models\ErrorDetail(
+                \ComplyanceSDK\Enums\ErrorCode::NETWORK_ERROR,
+                'Network error: ' . $error,
+                'Check your network connection and try again'
+            ));
+        }
+
+        if ($httpCode < 200 || $httpCode >= 300) {
+            throw new SDKException(new \ComplyanceSDK\Models\ErrorDetail(
+                \ComplyanceSDK\Enums\ErrorCode::API_ERROR,
+                "Purchase invoice request failed with status {$httpCode}",
+                'Check your API key, base URL, and request parameters'
+            ));
+        }
+
+        if ($responseBody === '' || $responseBody === null) {
+            return [];
+        }
+
+        $decoded = json_decode($responseBody, true);
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    private static function resolveServiceUrl(string $path): string
+    {
+        $baseUrl = self::$config->getEnvironment()->getBaseUrl();
+        $normalizedBase = preg_replace('#/unify/?$#', '', $baseUrl);
+        return $normalizedBase . (str_starts_with($path, '/') ? $path : '/' . $path);
+    }
+
     /**
      * Find source by ID
      * 
@@ -878,6 +966,54 @@ class GETSUnifySDK
             return "Queue Manager is not initialized";
         }
     }
+
+    public static function listPurchaseInvoices(array $filters = [])
+    {
+        self::validateConfiguration();
+
+        $query = array_merge(['type' => 'purchases'], array_filter(
+            $filters,
+            static fn($value) => $value !== null
+        ));
+
+        return self::getJson('/documents?' . http_build_query($query));
+    }
+
+    public static function getPurchaseInvoice(string $id)
+    {
+        self::validateConfiguration();
+
+        if (trim($id) === '') {
+            throw new ValidationException('Purchase invoice id is required', 'Provide a valid purchase invoice id.');
+        }
+
+        return self::getJson('/documents/' . rawurlencode($id) . '?type=purchases');
+    }
+
+    public static function verifyWebhookSignature(
+        string $payload,
+        string $signature,
+        string $secret,
+        string $algorithm = 'sha256'
+    ): bool {
+        $normalizedAlgorithm = strtolower(trim($algorithm));
+        if (!in_array($normalizedAlgorithm, ['sha256', 'sha512'], true)) {
+            throw new ValidationException(
+                "Unsupported webhook HMAC algorithm: {$algorithm}",
+                'Use sha256 or sha512.'
+            );
+        }
+
+        $expectedSignature = hash_hmac($normalizedAlgorithm, $payload, $secret);
+        if (!hash_equals($expectedSignature, trim($signature))) {
+            throw new ValidationException(
+                'Webhook signature verification failed',
+                'Ensure you use the raw request body and the correct webhook secret.'
+            );
+        }
+
+        return true;
+    }
     
     /**
      * Get detailed queue status
@@ -892,6 +1028,24 @@ class GETSUnifySDK
             return new \ComplyanceSDK\Models\QueueStatus(0, 0, 0, 0, false);
         }
     }
+
+    /**
+     * Alias for queue detailed status (naming parity across SDKs).
+     */
+    public static function getQueueStatusDetailed()
+    {
+        if (self::$queueManager !== null && method_exists(self::$queueManager, 'getQueueStatusDetailed')) {
+            return self::$queueManager->getQueueStatusDetailed();
+        }
+        return [
+            'basePath' => null,
+            'isRunning' => false,
+            'pendingCount' => 0,
+            'processingCount' => 0,
+            'failedCount' => 0,
+            'successCount' => 0,
+        ];
+    }
     
     /**
      * Retry failed submissions
@@ -901,6 +1055,40 @@ class GETSUnifySDK
         if (self::$queueManager !== null) {
             self::$queueManager->retryFailedSubmissions();
         }
+    }
+
+    /**
+     * Retry one failed queue item by queue item id (file name without .json).
+     */
+    public static function retryFailed(string $queueItemId)
+    {
+        if (self::$queueManager !== null) {
+            return self::$queueManager->retryFailedSubmission($queueItemId);
+        }
+        return false;
+    }
+
+    public static function pauseQueueProcessing()
+    {
+        if (self::$queueManager !== null) {
+            self::$queueManager->stopProcessing();
+        }
+    }
+
+    public static function resumeQueueProcessing()
+    {
+        if (self::$queueManager !== null) {
+            self::$queueManager->startProcessing();
+        }
+    }
+
+    public static function drainQueue(int $timeoutSeconds = 30): bool
+    {
+        if (self::$queueManager === null) {
+            return true;
+        }
+
+        return self::$queueManager->drainQueue($timeoutSeconds);
     }
     
     /**
@@ -1407,20 +1595,23 @@ class GETSUnifySDK
             return false;
         }
 
+        $retryConfig = self::$config !== null ? self::$config->getRetryConfig() : null;
+
         // Check HTTP status code in context
         $httpStatusObj = $e->getErrorDetail()->getContextValue('httpStatus');
         if ($httpStatusObj !== null) {
             try {
                 $statusCode = is_numeric($httpStatusObj) ? (int)$httpStatusObj : 0;
-                
-                // Only 500-range errors (500-599) should trigger queue access
-                $isServerStatus = $statusCode >= 500 && $statusCode < 600;
-                if (!$isServerStatus) {
-                    error_log("HTTP status {$statusCode} detected (non 500-range) - skipping queue");
-                } else {
-                    error_log("Server error detected from HTTP status: {$statusCode}");
+
+                if ($retryConfig !== null && method_exists($retryConfig, 'shouldRetryHttpCode')) {
+                    $retryable = $retryConfig->shouldRetryHttpCode($statusCode);
+                    if ($retryable) {
+                        return true;
+                    }
                 }
-                return $isServerStatus;
+
+                // Backward-compatible fallback
+                return $statusCode >= 500 && $statusCode < 600;
             } catch (Exception $ex) {
                 error_log("Invalid HTTP status format: {$httpStatusObj}");
                 // Ignore invalid status
@@ -1429,9 +1620,16 @@ class GETSUnifySDK
             error_log("No httpStatus in ErrorDetail context, not counting as server error");
         }
 
-        // Fallback: use error codes only when HTTP status is unavailable
+        // Fallback: use retry config / error codes when HTTP status is unavailable
         $errorCode = $e->getErrorDetail()->getCode();
+        if ($retryConfig !== null && method_exists($retryConfig, 'shouldRetry')) {
+            if ($retryConfig->shouldRetry($errorCode)) {
+                return true;
+            }
+        }
+
         return $errorCode === \ComplyanceSDK\Enums\ErrorCode::INTERNAL_SERVER_ERROR ||
+               $errorCode === \ComplyanceSDK\Enums\ErrorCode::RATE_LIMIT_EXCEEDED ||
                $errorCode === \ComplyanceSDK\Enums\ErrorCode::SERVICE_UNAVAILABLE;
     }
 
