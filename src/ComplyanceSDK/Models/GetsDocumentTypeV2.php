@@ -8,6 +8,8 @@ class GetsDocumentBase
     public const SIMPLIFIED_INVOICE = 'simplified_invoice';
     public const CREDIT_NOTE = 'credit_note';
     public const DEBIT_NOTE = 'debit_note';
+    public const SIMPLIFIED_CREDIT_NOTE = 'simplified_credit_note';
+    public const SIMPLIFIED_DEBIT_NOTE = 'simplified_debit_note';
 }
 
 class GetsDocumentModifier
@@ -28,6 +30,12 @@ class GetsDocumentModifier
     public const REVERSE_CHARGE = 'reverse_charge';
     public const CONTINUOUS_SUPPLY = 'continuous_supply';
     public const FREE_TRADE_ZONE = 'free_trade_zone';
+    public const DEEMED_SUPPLY = 'deemed_supply';
+    public const MARGIN_SCHEME = 'margin_scheme';
+    public const DISCLOSED_AGENT = 'disclosed_agent';
+    public const E_COMMERCE = 'e_commerce';
+    public const OUT_OF_SCOPE = 'out_of_scope';
+    public const INTRA_COMMUNITY = 'intra_community';
     public const INTRA_COMMUNITY_SUPPLY = 'intra_community_supply';
     public const CONSOLIDATED = 'consolidated';
 }
@@ -35,10 +43,13 @@ class GetsDocumentModifier
 class GetsDocumentVariant
 {
     public const STANDARD = 'standard';
+    public const ADVANCE = 'advance';
+    public const REFUND = 'refund';
     public const PARTIAL = 'partial';
     public const PARTIAL_CONSTRUCTION = 'partial_construction';
     public const PARTIAL_FINAL_CONSTRUCTION = 'partial_final_construction';
     public const FINAL_CONSTRUCTION = 'final_construction';
+    public const CORRECTIVE = 'corrective';
 }
 
 class BaseValue

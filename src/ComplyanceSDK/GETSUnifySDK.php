@@ -1352,6 +1352,8 @@ class GETSUnifySDK
             GetsDocumentBase::SIMPLIFIED_INVOICE,
             GetsDocumentBase::CREDIT_NOTE,
             GetsDocumentBase::DEBIT_NOTE,
+            GetsDocumentBase::SIMPLIFIED_CREDIT_NOTE,
+            GetsDocumentBase::SIMPLIFIED_DEBIT_NOTE,
         ];
 
         if ($base === '' || !in_array($base, $allowedBases, true)) {

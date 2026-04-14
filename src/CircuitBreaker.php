@@ -1,11 +1,8 @@
 <?php
-
 namespace Complyance\SDK;
-
 use Psr\Log\LoggerInterface;
 use Psr\Log\LoggerAwareTrait;
 use Psr\Log\NullLogger;
-
 /**
  * Circuit Breaker implementation for handling service failures
  */
