@@ -941,15 +941,55 @@ class GETSUnifySDK
     }
 
     /**
-     * Get the status of a submission by its ID.
-     * 
+     * Get retrieval status by documentId.
+     *
+     * @param string $documentId Document ID
+     * @return array
+     * @throws SDKException
+     */
+    public static function getDocumentStatus(string $documentId): array
+    {
+        self::validateConfiguration();
+
+        $normalized = trim($documentId);
+        if ($normalized === '') {
+            throw new SDKException(new \ComplyanceSDK\Models\ErrorDetail(
+                \ComplyanceSDK\Enums\ErrorCode::INVALID_ARGUMENT,
+                'Document ID is required',
+                'Provide a valid documentId to fetch retrieval status.'
+            ));
+        }
+
+        return self::getJson('/api/v3/documents/' . rawurlencode($normalized) . '/status');
+    }
+
+    /**
+     * Deprecated submissionId polling endpoint.
+     *
      * @param string $submissionId Submission ID
-     * @return SubmissionStatus Status
+     * @return array
+     * @throws SDKException
+     */
+    public static function getSubmissionStatus(string $submissionId): array
+    {
+        $unused = $submissionId;
+        throw new SDKException(new \ComplyanceSDK\Models\ErrorDetail(
+            \ComplyanceSDK\Enums\ErrorCode::INVALID_ARGUMENT,
+            'submissionId status retrieval is no longer supported',
+            'Use getDocumentStatus(documentId) for polling status and trace endpoints.'
+        ));
+    }
+
+    /**
+     * @deprecated Use getDocumentStatus(documentId).
+     *
+     * @param string $submissionId Submission ID
+     * @return array
+     * @throws SDKException
      */
     public static function getStatus($submissionId)
     {
-        // Stub: In a real implementation, this would query the API or local cache.
-        return SubmissionStatus::fromString(SubmissionStatus::QUEUED);
+        return self::getSubmissionStatus((string) $submissionId);
     }
 
     /**
