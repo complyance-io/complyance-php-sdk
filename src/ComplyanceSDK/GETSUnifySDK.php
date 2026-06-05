@@ -26,7 +26,10 @@ use ComplyanceSDK\Enums\Operation;
 use ComplyanceSDK\Enums\Mode;
 use ComplyanceSDK\Enums\Purpose;
 use ComplyanceSDK\Enums\Environment;
+use ComplyanceSDK\Enums\ErrorCode;
 use ComplyanceSDK\Enums\SubmissionStatus;
+use ComplyanceSDK\Models\ErrorDetail;
+use ComplyanceSDK\PurchaseInvoice\PurchaseInvoiceResult;
 
 /**
  * Main entry point for the Complyance GETS Unify PHP SDK.
@@ -387,7 +390,7 @@ class GETSUnifySDK
     ) {
         if (empty($jsonPayload) || trim($jsonPayload) === '') {
             throw \ComplyanceSDK\Exceptions\SDKException::fromErrorDetail(new \ComplyanceSDK\Models\ErrorDetail(
-                \ComplyanceSDK\Enums\ErrorCode::EMPTY_PAYLOAD,
+                \ComplyanceSDK\Enums\ErrorCode::MISSING_FIELD,
                 "Payload is required but was null or empty",
                 'Provide a non-empty JSON payload string. Example: \'{"invoiceNumber":"INV-123","amount":1000}\''
             ));
@@ -397,7 +400,7 @@ class GETSUnifySDK
         
         if (json_last_error() !== JSON_ERROR_NONE) {
             $error = new \ComplyanceSDK\Models\ErrorDetail(
-                \ComplyanceSDK\Enums\ErrorCode::MALFORMED_JSON,
+                \ComplyanceSDK\Enums\ErrorCode::VALIDATION_FAILED,
                 "Failed to parse JSON payload: " . json_last_error_msg(),
                 'Ensure the payload is valid JSON. Example: \'{"invoiceNumber":"INV-123","amount":1000}\''
             );
@@ -412,7 +415,7 @@ class GETSUnifySDK
         
         if (!is_array($payloadArray)) {
             throw \ComplyanceSDK\Exceptions\SDKException::fromErrorDetail(new \ComplyanceSDK\Models\ErrorDetail(
-                \ComplyanceSDK\Enums\ErrorCode::MALFORMED_JSON,
+                \ComplyanceSDK\Enums\ErrorCode::VALIDATION_FAILED,
                 "Failed to parse JSON payload: parsed result is not an array",
                 'Ensure the payload is valid JSON and represents an object structure. Example: \'{"invoiceNumber":"INV-123"}\''
             ));
@@ -733,7 +736,7 @@ class GETSUnifySDK
         }
     }
 
-    private static function getJson(string $path): array
+    private static function getJson(string $path, array $extraHeaders = []): array
     {
         $ch = curl_init();
         $url = self::resolveServiceUrl($path);
@@ -742,15 +745,13 @@ class GETSUnifySDK
             CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HTTPGET => true,
-            CURLOPT_HTTPHEADER => [
+            CURLOPT_HTTPHEADER => array_merge([
                 'Accept: application/json',
                 'Authorization: Bearer ' . self::$config->getApiKey(),
                 'X-API-Key: ' . self::$config->getApiKey(),
-            ],
+            ], $extraHeaders),
             CURLOPT_TIMEOUT => 30,
             CURLOPT_CONNECTTIMEOUT => 10,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => false,
         ]);
 
         $responseBody = curl_exec($ch);
@@ -790,6 +791,49 @@ class GETSUnifySDK
         $baseUrl = self::$config->getEnvironment()->getBaseUrl();
         $normalizedBase = preg_replace('#/unify/?$#', '', $baseUrl);
         return $normalizedBase . (str_starts_with($path, '/') ? $path : '/' . $path);
+    }
+
+    /**
+     * @return array<int, string>
+     * @throws SDKException
+     */
+    private static function getPurchaseInvoiceHeaders(): array
+    {
+        return [
+            'x-client-id: ' . self::resolvePurchaseInvoiceClientId(),
+            'x-api-key-environment: ' . self::resolvePurchaseInvoiceApiKeyEnvironment(),
+        ];
+    }
+
+    /**
+     * @throws SDKException
+     */
+    private static function resolvePurchaseInvoiceClientId(): string
+    {
+        $clientId = getenv('COMPLYANCE_CLIENT_ID');
+        if (is_string($clientId) && trim($clientId) !== '') {
+            return trim($clientId);
+        }
+
+        if (isset($_ENV['COMPLYANCE_CLIENT_ID']) && is_string($_ENV['COMPLYANCE_CLIENT_ID']) && trim($_ENV['COMPLYANCE_CLIENT_ID']) !== '') {
+            return trim($_ENV['COMPLYANCE_CLIENT_ID']);
+        }
+
+        throw SDKException::fromErrorDetail(new ErrorDetail(
+            ErrorCode::CONFIGURATION_ERROR,
+            'COMPLYANCE_CLIENT_ID is required for purchase invoice retrieval',
+            'Set COMPLYANCE_CLIENT_ID to your buyer workspace/client ID before calling getPurchaseInvoice().'
+        ));
+    }
+
+    private static function resolvePurchaseInvoiceApiKeyEnvironment(): string
+    {
+        $environment = self::$config->getEnvironment();
+        $environmentCode = $environment instanceof Environment
+            ? $environment->getCode()
+            : (string) $environment;
+
+        return $environmentCode === Environment::PRODUCTION ? 'production' : 'mock';
     }
 
     /**
@@ -1019,7 +1063,7 @@ class GETSUnifySDK
         return self::getJson('/documents?' . http_build_query($query));
     }
 
-    public static function getPurchaseInvoice(string $id)
+    public static function getPurchaseInvoice(string $id): PurchaseInvoiceResult
     {
         self::validateConfiguration();
 
@@ -1027,7 +1071,44 @@ class GETSUnifySDK
             throw new ValidationException('Purchase invoice id is required', 'Provide a valid purchase invoice id.');
         }
 
-        return self::getJson('/documents/' . rawurlencode($id) . '?type=purchases');
+        $response = self::getJson(
+            '/api/v3/documents/' . rawurlencode($id) . '?type=purchases',
+            self::getPurchaseInvoiceHeaders()
+        );
+
+        if (($response['success'] ?? null) === false) {
+            throw SDKException::fromErrorDetail(new ErrorDetail(
+                ErrorCode::API_ERROR,
+                (string) ($response['message'] ?? 'Purchase invoice request failed'),
+                'Check your API key, client/workspace id, and purchase invoice id.',
+                null,
+                null,
+                null,
+                [
+                    'apiCode' => $response['code'] ?? null,
+                    'responseBody' => $response,
+                ]
+            ));
+        }
+
+        $data = $response;
+        if (isset($response['data']) && is_array($response['data'])) {
+            $data = $response['data'];
+        }
+
+        if (!is_array($data) || !isset($data['documentId'])) {
+            throw SDKException::fromErrorDetail(new ErrorDetail(
+                ErrorCode::API_ERROR,
+                'Invalid purchase invoice response format',
+                'Upgrade the SDK or verify the API response payload shape.',
+                null,
+                null,
+                null,
+                ['responseBody' => $response]
+            ));
+        }
+
+        return PurchaseInvoiceResult::fromArray($data);
     }
 
     public static function verifyWebhookSignature(
