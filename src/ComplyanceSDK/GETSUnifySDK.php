@@ -29,6 +29,7 @@ use ComplyanceSDK\Enums\Environment;
 use ComplyanceSDK\Enums\ErrorCode;
 use ComplyanceSDK\Enums\SubmissionStatus;
 use ComplyanceSDK\Models\ErrorDetail;
+use ComplyanceSDK\Onboarding\OnboardingClient;
 use ComplyanceSDK\PurchaseInvoice\PurchaseInvoiceResult;
 
 /**
@@ -109,6 +110,22 @@ class GETSUnifySDK
         if (in_array($environment->getCode(), $productionEnvironments)) {
         } else {
         }
+    }
+
+    /**
+     * Creates a client for the unified onboarding API.
+     *
+     * @return OnboardingClient
+     * @throws SDKException
+     */
+    public static function onboarding()
+    {
+        self::validateConfiguration();
+
+        return new OnboardingClient(
+            self::$config->getApiKey(),
+            self::$config->getEnvironment()->getBaseUrl()
+        );
     }
 
     /**
