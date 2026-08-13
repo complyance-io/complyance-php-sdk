@@ -2,6 +2,8 @@
 
 namespace ComplyanceSDK;
 
+use ComplyanceSDK\Enums\Country;
+use ComplyanceSDK\Enums\DocumentType;
 use ComplyanceSDK\Enums\Environment;
 use ComplyanceSDK\Enums\Operation;
 use ComplyanceSDK\Enums\Mode;
@@ -10,7 +12,6 @@ use ComplyanceSDK\Models\RetryConfig;
 use ComplyanceSDK\Models\RetryStrategy;
 use ComplyanceSDK\Models\CircuitBreaker;
 use ComplyanceSDK\Models\Source;
-use ComplyanceSDK\Models\SubmissionResponse;
 use ComplyanceSDK\Exceptions\SDKException;
 use ComplyanceSDK\Exceptions\APIException;
 
@@ -26,6 +27,7 @@ class APIClient
     private $retryConfig;
     private $retryStrategy;
     private $baseUrl;
+    private $debug;
 
     /**
      * Constructor
@@ -34,21 +36,28 @@ class APIClient
      * @param Environment $environment Environment
      * @param RetryConfig|null $retryConfig Retry configuration
      * @param CircuitBreaker|null $circuitBreaker Circuit breaker instance
+     * @param bool $debug Include v3 API debug information in responses
      */
-    public function __construct(string $apiKey, Environment $environment, ?RetryConfig $retryConfig = null, ?CircuitBreaker $circuitBreaker = null)
-    {
-        $this->apiKey = $apiKey;
+    public function __construct(
+        string $apiKey,
+        Environment $environment,
+        ?RetryConfig $retryConfig = null,
+        ?CircuitBreaker $circuitBreaker = null,
+        bool $debug = false
+    ) {
+        $this->apiKey = $this->sanitizeHeaderValue($apiKey);
         $this->environment = $environment;
         $this->retryConfig = $retryConfig ?? RetryConfig::defaultConfig();
         $this->retryStrategy = new RetryStrategy($this->retryConfig, $circuitBreaker);
-        $this->baseUrl = $environment->getBaseUrl();
+        $this->baseUrl = $environment->getUnifyV3Url();
+        $this->debug = $debug;
         
-        // Log configuration details prominently
-        echo "🔧 SDK Configuration:\n";
-        echo "   🌐 Environment: " . $environment->getCode() . "\n";
-        echo "   🔗 Base URL: " . $this->baseUrl . "\n";
-        echo "   🔑 API Key: " . substr($apiKey, 0, 8) . "...\n";
-        echo "   🔄 Retry Config: " . $this->retryConfig->toJson() . "\n";
+        if ($this->debug) {
+            error_log(
+                'SDK Configuration - Environment: ' . $environment->getCode() .
+                ', Base URL: ' . $this->baseUrl
+            );
+        }
     }
 
     /**
@@ -60,10 +69,14 @@ class APIClient
      */
     public function sendUnifyRequest(UnifyRequest $request): string
     {
-        // Execute the request with retry logic like Java SDK
+        $source = $request->source ?? [];
+        $sourceName = is_array($source)
+            ? (string)($source['name'] ?? ($source['identity'] ?? 'unknown'))
+            : (string)$source;
+
         return $this->retryStrategy->execute(function() use ($request) {
             return $this->sendUnifyRequestInternal($request);
-        }, "unify-request-" . $request->getSource()['name']);
+        }, 'unify-request-' . $sourceName);
     }
 
     /**
@@ -75,29 +88,26 @@ class APIClient
      */
     private function sendUnifyRequestInternal(UnifyRequest $request): string
     {
-        // Log essential request details
-        echo "🌐 API Request URL: " . $this->baseUrl . "\n";
-        echo "📡 Sending POST request to: " . $this->baseUrl . "\n";
-        error_log("API Request - URL: " . $this->baseUrl . ", RequestID: " . $request->getRequestId() . 
-                  ", DocType: " . $request->getDocumentTypeString() . ", Country: " . $request->getCountry());
-        
-        // Debug console output (will appear in VS Code Debug Console)
-        if (function_exists('xdebug_break')) {
-            xdebug_break(); // This will show in debug console
+        if ($this->debug) {
+            error_log(
+                'API Request - URL: ' . $this->baseUrl .
+                ', RequestID: ' . $request->getRequestId() .
+                ', DocType: ' . $request->getDocumentTypeString() .
+                ', Country: ' . $request->getCountry()
+            );
         }
-        
-        // Log request JSON
-        $requestJson = json_encode($request->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-        error_log("API Request JSON:\n" . $requestJson);
 
         // Make real HTTP API call
         $response = $this->makeHttpRequest($request);
 
-        // Log response status and raw response
-        $responseData = json_decode($response, true);
-        $status = $responseData['status'] ?? 'unknown';
-        error_log("API Response - RequestID: " . $request->getRequestId() . ", Status: " . $status);
-        error_log("API Raw Response:\n" . $response);
+        if ($this->debug) {
+            $responseData = json_decode($response, true);
+            $documentId = is_array($responseData) ? ($responseData['documentId'] ?? 'none') : 'none';
+            error_log(
+                'API Response - RequestID: ' . $request->getRequestId() .
+                ', DocumentID: ' . $documentId
+            );
+        }
 
         return $response;
     }
@@ -114,7 +124,8 @@ class APIClient
      */
     public function sendPayload(string $clientPayloadJson, Source $source, Country $country, DocumentType $documentType): SubmissionResponse
     {
-        // Convert legacy parameters to UnifyRequest
+        // Convert legacy parameters to UnifyRequest.
+        $v3DocumentType = $this->mapLegacyDocumentType($documentType);
         $request = UnifyRequest::builder()
             ->source([
                 'name' => $source->getName(),
@@ -124,10 +135,12 @@ class APIClient
                 'identity' => $source->getName() . ':' . $source->getVersion()
             ])
             ->documentType($documentType)
+            ->documentTypeString($v3DocumentType['base'])
+            ->documentTypeV2($v3DocumentType)
             ->country($country->getCode())
-            ->operation(Operation::SINGLE)
-            ->mode(Mode::DOCUMENTS)
-            ->purpose(Purpose::INVOICING)
+            ->operation(Operation::from(Operation::SINGLE))
+            ->mode(Mode::from(Mode::DOCUMENTS))
+            ->purpose(Purpose::from(Purpose::INVOICING))
             ->payload(json_decode($clientPayloadJson, true))
             ->destinations([])
             ->apiKey($this->apiKey)
@@ -141,10 +154,44 @@ class APIClient
         
         // Parse response to get status and message for backward compatibility
         $responseData = json_decode($response, true);
-        $status = $responseData['status'] ?? 'unknown';
+        $responseData = is_array($responseData) ? $responseData : [];
+        $status = !empty($responseData['documentId']) || !empty($responseData['payloadId'])
+            ? 'success'
+            : ($responseData['status'] ?? 'unknown');
         $message = $responseData['message'] ?? 'No message';
-        
-        return new SubmissionResponse($status, $message);
+
+        $submissionResponse = new SubmissionResponse($status, $message);
+        $submissionId = $responseData['documentId'] ?? ($responseData['payloadId'] ?? null);
+        if (is_string($submissionId) && $submissionId !== '') {
+            $submissionResponse->setSubmissionId($submissionId);
+        }
+
+        return $submissionResponse;
+    }
+
+    private function mapLegacyDocumentType(DocumentType $documentType): array
+    {
+        switch ($documentType->getCode()) {
+            case DocumentType::TAX_INVOICE:
+                return ['base' => 'tax_invoice', 'modifiers' => []];
+            case DocumentType::CREDIT_NOTE:
+                return ['base' => 'credit_note', 'modifiers' => []];
+            case DocumentType::DEBIT_NOTE:
+                return ['base' => 'debit_note', 'modifiers' => []];
+            case DocumentType::SIMPLIFIED_TAX_INVOICE:
+                return ['base' => 'simplified_invoice', 'modifiers' => []];
+            case DocumentType::SIMPLIFIED_CREDIT_NOTE:
+                return ['base' => 'simplified_credit_note', 'modifiers' => []];
+            case DocumentType::SIMPLIFIED_DEBIT_NOTE:
+                return ['base' => 'simplified_debit_note', 'modifiers' => []];
+            case DocumentType::SELF_BILLED_INVOICE:
+                return ['base' => 'tax_invoice', 'modifiers' => ['self_billed']];
+            default:
+                throw new \InvalidArgumentException(
+                    'This legacy document type has no unambiguous v3 mapping. ' .
+                    'Use GETSUnifySDK::pushToUnifyWithDocumentType() instead.'
+                );
+        }
     }
 
     /**
@@ -156,67 +203,91 @@ class APIClient
      */
     private function makeHttpRequest(UnifyRequest $request): string
     {
-        $ch = curl_init();
-        
-        // Set up cURL options
-        curl_setopt_array($ch, [
-            CURLOPT_URL => $this->baseUrl,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => json_encode($request->toArray()),
-            CURLOPT_HTTPHEADER => [
-                'Content-Type: application/json',
-                'Authorization: Bearer ' . $request->getApiKey(),
-                'X-Request-ID: ' . $request->getRequestId(),
-                'Origin: SDK'
-            ],
-            CURLOPT_TIMEOUT => 60,
-            CURLOPT_CONNECTTIMEOUT => 10,
-            CURLOPT_SSL_VERIFYPEER => false, // For development only
-            CURLOPT_SSL_VERIFYHOST => false, // For development only
-        ]);
-        
-        // Add correlation ID header if available
-        if ($request->getCorrelationId() !== null) {
-            curl_setopt($ch, CURLOPT_HTTPHEADER, array_merge([
-                'Content-Type: application/json',
-                'Authorization: Bearer ' . $request->getApiKey(),
-                'X-Request-ID: ' . $request->getRequestId(),
-                'X-Correlation-ID: ' . $request->getCorrelationId(),
-                'Origin: SDK'
-            ]));
+        $requestBody = json_encode(
+            UnifyV3RequestSerializer::serialize($request, $this->environment, $this->debug)
+        );
+
+        if ($requestBody === false) {
+            throw new \RuntimeException('Failed to encode v3 Unify request: ' . json_last_error_msg());
         }
-        
-        // Execute the request
-        $responseBody = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
-        
-        // PHP 8.5 deprecates curl_close() as a no-op; keep it for older runtimes only.
-        if (PHP_VERSION_ID < 80500) {
-            curl_close($ch);
+
+        $headers = [
+            'Authorization: Bearer ' . $this->apiKey,
+            'Content-Type: application/json',
+        ];
+
+        if (isset($request->requestId) && trim((string)$request->requestId) !== '') {
+            $headers[] = 'X-Request-ID: ' . $this->sanitizeHeaderValue((string)$request->requestId);
         }
-        
-        // Handle cURL errors
-        if ($responseBody === false || !empty($error)) {
+        if (isset($request->correlationId) && trim((string)$request->correlationId) !== '') {
+            $headers[] = 'X-Correlation-ID: ' . $this->sanitizeHeaderValue((string)$request->correlationId);
+        }
+
+        $result = $this->executeHttpRequest($this->baseUrl, $requestBody, $headers);
+        $responseBody = $result['body'];
+        $httpCode = $result['status'];
+        $error = $result['error'];
+
+        if ($responseBody === false || $error !== '') {
             $errorDetail = new \ComplyanceSDK\Models\ErrorDetail(
                 \ComplyanceSDK\Enums\ErrorCode::NETWORK_ERROR,
                 'Network error: ' . $error,
                 'Check your network connection and try again'
             );
-            $errorDetail->setRetryable(true); // Explicitly set retryable flag
+            $errorDetail->setRetryable(true);
             throw SDKException::fromErrorDetail($errorDetail);
         }
-        
-        // Handle HTTP status codes
+
         if ($httpCode < 200 || $httpCode >= 300) {
             $this->handleErrorResponse($httpCode, $responseBody);
         }
-        
-        // Log the raw response from API
-        
-        // Return raw response as-is without any parsing
+
         return $responseBody;
+    }
+
+    private function sanitizeHeaderValue(string $value): string
+    {
+        $value = trim($value);
+        if (preg_match('/[\r\n]/', $value)) {
+            throw new \InvalidArgumentException('HTTP header values cannot contain line breaks.');
+        }
+
+        return $value;
+    }
+
+    /**
+     * Execute the HTTP request. Protected to allow network-free contract tests.
+     *
+     * @return array{body:string|false,status:int,error:string}
+     */
+    protected function executeHttpRequest(string $url, string $body, array $headers): array
+    {
+        $ch = curl_init();
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $body,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_TIMEOUT => 60,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+        ]);
+
+        $responseBody = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
+
+        if (PHP_VERSION_ID < 80500) {
+            curl_close($ch);
+        }
+
+        return [
+            'body' => $responseBody,
+            'status' => (int)$httpCode,
+            'error' => (string)$error,
+        ];
     }
 
     /**
@@ -228,7 +299,9 @@ class APIClient
      */
     private function handleErrorResponse($httpCode, $responseBody)
     {
-        error_log("API request failed with HTTP {$httpCode}: {$responseBody}");
+        if ($this->debug) {
+            error_log("API request failed with HTTP {$httpCode}");
+        }
 
         // Create base error detail
         $errorDetail = new \ComplyanceSDK\Models\ErrorDetail(

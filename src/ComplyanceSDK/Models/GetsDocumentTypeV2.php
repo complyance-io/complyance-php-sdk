@@ -146,10 +146,10 @@ class GetsDocumentTypeV2
 
     public function toArray(): array
     {
-        $result = ['base' => $this->base];
-        if (!empty($this->modifiers)) {
-            $result['modifiers'] = $this->modifiers;
-        }
+        $result = [
+            'base' => $this->base,
+            'modifiers' => $this->modifiers,
+        ];
         if ($this->variant !== null) {
             $result['variant'] = $this->variant;
         }

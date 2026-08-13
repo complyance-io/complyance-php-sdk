@@ -32,6 +32,41 @@ final class RetrievalStatusTest extends TestCase
         GETSUnifySDK::getDocumentStatus('   ');
     }
 
+    public function testGetDocumentStatusRequiresCountry(): void
+    {
+        $this->expectException(SDKException::class);
+        GETSUnifySDK::getDocumentStatus('doc-123');
+    }
+
+    public function testDocumentStatusUsesInvoiceEndpointAndQuery(): void
+    {
+        $reflection = new ReflectionClass(GETSUnifySDK::class);
+        $method = $reflection->getMethod('buildDocumentStatusPath');
+        $method->setAccessible(true);
+
+        $path = $method->invoke(
+            null,
+            'doc/123',
+            Country::from(Country::AE),
+            'sales'
+        );
+
+        $this->assertSame(
+            '/invoices/doc%2F123/status?country=AE&environment=sandbox&type=sales',
+            $path
+        );
+    }
+
+    public function testGetDocumentStatusRejectsInvalidType(): void
+    {
+        $this->expectException(SDKException::class);
+        GETSUnifySDK::getDocumentStatus(
+            'doc-123',
+            Country::from(Country::AE),
+            'refunds'
+        );
+    }
+
     public function testGetSubmissionStatusIsDeprecated(): void
     {
         $this->expectException(SDKException::class);

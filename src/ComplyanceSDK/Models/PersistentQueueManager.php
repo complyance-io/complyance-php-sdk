@@ -574,9 +574,16 @@ class PersistentQueueManager
     {
         $request = new \ComplyanceSDK\UnifyRequest();
         $request->setSource($data['source'] ?? []);
-        $request->setDocumentType($data['documentType'] ?? null);
-        $request->setDocumentTypeString((string)($data['documentType'] ?? ($data['documentTypeString'] ?? 'tax_invoice')));
-        $request->setDocumentTypeV2(isset($data['documentType']) && is_array($data['documentType']) ? $data['documentType'] : ($data['documentTypeV2'] ?? null));
+        $storedDocumentType = $data['documentType'] ?? ($data['documentTypeString'] ?? 'tax_invoice');
+        $documentTypeV2 = is_array($storedDocumentType)
+            ? $storedDocumentType
+            : (isset($data['documentTypeV2']) && is_array($data['documentTypeV2']) ? $data['documentTypeV2'] : null);
+        $documentTypeString = is_array($storedDocumentType)
+            ? (string)($storedDocumentType['base'] ?? 'tax_invoice')
+            : (string)$storedDocumentType;
+        $request->setDocumentType($storedDocumentType);
+        $request->setDocumentTypeString($documentTypeString);
+        $request->setDocumentTypeV2($documentTypeV2);
         $request->setCountry((string)($data['country'] ?? ''));
         $request->setOperation($data['operation'] ?? null);
         $request->setMode($data['mode'] ?? null);
@@ -667,7 +674,12 @@ class PersistentQueueManager
 
     private function isSuccessfulResponse($response)
     {
-        // Check top-level status
+        // V3 invoicing and mapping responses identify successful work at the top level.
+        if (!empty($response['documentId']) || !empty($response['payloadId'])) {
+            return true;
+        }
+
+        // Check legacy top-level status
         if (isset($response['status']) && $response['status'] === 'success') {
             return true;
         }

@@ -74,6 +74,16 @@ class Environment
     }
 
     /**
+     * Get the public v3 Unify endpoint without changing other service URL behavior.
+     *
+     * @return string V3 Unify endpoint
+     */
+    public function getUnifyV3Url()
+    {
+        return preg_replace('#/unify/?$#', '/api/v3/unify', $this->getBaseUrl());
+    }
+
+    /**
      * Legacy support - maintain backward compatibility
      * 
      * @deprecated Use getBaseUrl() instead

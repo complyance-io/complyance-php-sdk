@@ -83,7 +83,8 @@ class GETSUnifySDK
             $sdkConfig->getApiKey(),
             $sdkConfig->getEnvironment(),
             $sdkConfig->getRetryConfig(),
-            $sharedCircuitBreaker
+            $sharedCircuitBreaker,
+            $sdkConfig->isDebug()
         );
 
         // Initialize PersistentQueueManager with shared circuit breaker
@@ -790,8 +791,15 @@ class GETSUnifySDK
         if ($httpCode < 200 || $httpCode >= 300) {
             throw new SDKException(new \ComplyanceSDK\Models\ErrorDetail(
                 \ComplyanceSDK\Enums\ErrorCode::API_ERROR,
-                "Purchase invoice request failed with status {$httpCode}",
-                'Check your API key, base URL, and request parameters'
+                "API request failed with status {$httpCode}",
+                'Check your API key, base URL, and request parameters',
+                null,
+                null,
+                null,
+                [
+                    'httpStatus' => $httpCode,
+                    'responseBody' => $responseBody,
+                ]
             ));
         }
 
@@ -807,7 +815,7 @@ class GETSUnifySDK
     {
         $baseUrl = self::$config->getEnvironment()->getBaseUrl();
         $normalizedBase = preg_replace('#/unify/?$#', '', $baseUrl);
-        return $normalizedBase . (str_starts_with($path, '/') ? $path : '/' . $path);
+        return $normalizedBase . (strpos($path, '/') === 0 ? $path : '/' . $path);
     }
 
     /**
@@ -1002,13 +1010,19 @@ class GETSUnifySDK
     }
 
     /**
-     * Get retrieval status by documentId.
+     * Get invoice status by documentId.
      *
-     * @param string $documentId Document ID
+     * The country argument remains optional in the PHP signature so older calls
+     * receive an actionable SDK validation error instead of an ArgumentCountError.
+     * It is required by the current status API.
+     *
+     * @param string $documentId Document ID returned by the Unify API
+     * @param Country|string|null $country Invoice country
+     * @param string $type Invoice collection type: sales or purchases
      * @return array
      * @throws SDKException
      */
-    public static function getDocumentStatus(string $documentId): array
+    public static function getDocumentStatus(string $documentId, $country = null, string $type = 'sales'): array
     {
         self::validateConfiguration();
 
@@ -1021,7 +1035,38 @@ class GETSUnifySDK
             ));
         }
 
-        return self::getJson('/api/v3/documents/' . rawurlencode($normalized) . '/status');
+        return self::getJson(self::buildDocumentStatusPath($normalized, $country, $type));
+    }
+
+    private static function buildDocumentStatusPath(string $documentId, $country, string $type): string
+    {
+        $countryCode = $country instanceof Country ? $country->getCode() : (string)$country;
+        $countryCode = strtoupper(trim($countryCode));
+        if ($countryCode === '' || !Country::isValid($countryCode)) {
+            throw new ValidationException(
+                'Country is required for invoice status retrieval',
+                'Pass a valid Country as the second argument to getDocumentStatus().'
+            );
+        }
+
+        $normalizedType = strtolower(trim($type));
+        if (!in_array($normalizedType, ['sales', 'purchases'], true)) {
+            throw new ValidationException(
+                'Invalid invoice status type',
+                'Use sales or purchases.'
+            );
+        }
+
+        $environment = self::$config->getEnvironment()->getCode() === Environment::PRODUCTION
+            ? Environment::PRODUCTION
+            : Environment::SANDBOX;
+        $query = http_build_query([
+            'country' => $countryCode,
+            'environment' => $environment,
+            'type' => $normalizedType,
+        ], '', '&', PHP_QUERY_RFC3986);
+
+        return '/invoices/' . rawurlencode($documentId) . '/status?' . $query;
     }
 
     /**
@@ -1037,12 +1082,12 @@ class GETSUnifySDK
         throw new SDKException(new \ComplyanceSDK\Models\ErrorDetail(
             \ComplyanceSDK\Enums\ErrorCode::INVALID_ARGUMENT,
             'submissionId status retrieval is no longer supported',
-            'Use getDocumentStatus(documentId) for polling status and trace endpoints.'
+            'Use getDocumentStatus(documentId, country, type) for invoice status retrieval.'
         ));
     }
 
     /**
-     * @deprecated Use getDocumentStatus(documentId).
+     * @deprecated Use getDocumentStatus(documentId, country, type).
      *
      * @param string $submissionId Submission ID
      * @return array
@@ -1314,7 +1359,9 @@ class GETSUnifySDK
         $apiClient = new APIClient(
             self::$config->getApiKey(), 
             self::$config->getEnvironment(), 
-            self::$config->getRetryConfig()
+            self::$config->getRetryConfig(),
+            null,
+            self::$config->isDebug()
         );
         return $apiClient->sendUnifyRequest($unifyRequest);
     }

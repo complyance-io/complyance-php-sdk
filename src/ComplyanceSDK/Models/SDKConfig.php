@@ -17,6 +17,7 @@ class SDKConfig
     private $retryConfig;
     private $autoGenerateTaxDestination;
     private $correlationId;
+    private $debug;
 
     /**
      * Constructor
@@ -27,6 +28,7 @@ class SDKConfig
      * @param RetryConfig|null $retryConfig Retry configuration
      * @param bool $autoGenerateTaxDestination Auto-generate tax destination
      * @param string|null $correlationId Correlation ID
+     * @param bool $debug Include v3 API debug information in responses
      */
     public function __construct(
         $apiKey,
@@ -34,7 +36,8 @@ class SDKConfig
         $sources = [],
         $retryConfig = null,
         $autoGenerateTaxDestination = true,
-        $correlationId = null
+        $correlationId = null,
+        $debug = false
     ) {
         $this->apiKey = $apiKey;
         $this->environment = $environment;
@@ -42,6 +45,7 @@ class SDKConfig
         $this->retryConfig = $retryConfig ?? RetryConfig::defaultConfig();
         $this->autoGenerateTaxDestination = $autoGenerateTaxDestination;
         $this->correlationId = $correlationId;
+        $this->debug = (bool)$debug;
     }
 
     /**
@@ -102,6 +106,16 @@ class SDKConfig
     public function getCorrelationId()
     {
         return $this->correlationId;
+    }
+
+    /**
+     * Check whether v3 API debug output is enabled.
+     *
+     * @return bool
+     */
+    public function isDebug()
+    {
+        return $this->debug;
     }
 
     /**
@@ -177,6 +191,18 @@ class SDKConfig
     }
 
     /**
+     * Enable or disable v3 API debug output.
+     *
+     * @param bool $debug
+     * @return self
+     */
+    public function setDebug($debug)
+    {
+        $this->debug = (bool)$debug;
+        return $this;
+    }
+
+    /**
      * Convert to array
      * 
      * @return array Array representation
@@ -189,7 +215,8 @@ class SDKConfig
             'sources' => array_map(function($source) { return $source->toArray(); }, $this->sources),
             'retryConfig' => $this->retryConfig->toArray(),
             'autoGenerateTaxDestination' => $this->autoGenerateTaxDestination,
-            'correlationId' => $this->correlationId
+            'correlationId' => $this->correlationId,
+            'debug' => $this->debug
         ];
     }
 
@@ -227,7 +254,8 @@ class SDKConfig
             $sources,
             $retryConfig,
             $data['autoGenerateTaxDestination'] ?? true,
-            $data['correlationId'] ?? null
+            $data['correlationId'] ?? null,
+            $data['debug'] ?? false
         );
     }
 
@@ -255,6 +283,7 @@ class SDKConfigBuilder
     private $retryConfig = null;
     private $autoGenerateTaxDestination = true;
     private $correlationId = null;
+    private $debug = false;
     
     /**
      * Set API key
@@ -327,6 +356,18 @@ class SDKConfigBuilder
         $this->correlationId = $correlationId;
         return $this;
     }
+
+    /**
+     * Enable or disable v3 API debug output.
+     *
+     * @param bool $debug
+     * @return self
+     */
+    public function debug($debug)
+    {
+        $this->debug = (bool)$debug;
+        return $this;
+    }
     
     /**
      * Build SDK configuration
@@ -341,7 +382,8 @@ class SDKConfigBuilder
             $this->sources,
             $this->retryConfig,
             $this->autoGenerateTaxDestination,
-            $this->correlationId
+            $this->correlationId,
+            $this->debug
         );
     }
 }
