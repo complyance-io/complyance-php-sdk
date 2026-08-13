@@ -29,6 +29,7 @@ class UnifyRequest
     public $timestamp;
     public $env;
     public $correlationId;
+    public $newApi;
 
     /**
      * Private constructor - use builder
@@ -123,6 +124,11 @@ class UnifyRequest
         return $this->correlationId;
     }
 
+    public function getNewApi(): ?bool
+    {
+        return $this->newApi;
+    }
+
     // Setter methods for queue processing
     public function setSource($source): void
     {
@@ -199,6 +205,11 @@ class UnifyRequest
         $this->correlationId = $correlationId;
     }
 
+    public function setNewApi(?bool $newApi): void
+    {
+        $this->newApi = $newApi;
+    }
+
     /**
      * Convert to array for JSON serialization
      * Matches Java SDK structure with @JsonProperty annotations
@@ -212,7 +223,7 @@ class UnifyRequest
             $documentType = $this->documentTypeV2;
         }
 
-        return [
+        $request = [
             'source' => $this->source,
             'documentType' => $documentType, // Matches Java V1/V2 @JsonProperty("documentType")
             'country' => $this->country,
@@ -227,6 +238,12 @@ class UnifyRequest
             'destinations' => $this->destinations,
             'correlationId' => $this->correlationId
         ];
+
+        if ($this->newApi !== null) {
+            $request['new-api'] = $this->newApi;
+        }
+
+        return $request;
     }
 
 }

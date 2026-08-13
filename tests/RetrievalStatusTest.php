@@ -32,39 +32,91 @@ final class RetrievalStatusTest extends TestCase
         GETSUnifySDK::getDocumentStatus('   ');
     }
 
-    public function testGetDocumentStatusRequiresCountry(): void
-    {
-        $this->expectException(SDKException::class);
-        GETSUnifySDK::getDocumentStatus('doc-123');
-    }
-
-    public function testDocumentStatusUsesInvoiceEndpointAndQuery(): void
+    public function testDocumentStatusUsesLegacyEndpointWithoutQuery(): void
     {
         $reflection = new ReflectionClass(GETSUnifySDK::class);
         $method = $reflection->getMethod('buildDocumentStatusPath');
+        $method->setAccessible(true);
+
+        $path = $method->invoke(null, 'doc/123');
+
+        $this->assertSame(
+            '/api/v3/documents/doc%2F123/status',
+            $path
+        );
+    }
+
+    public function testInvoiceStatusRequiresInvoiceId(): void
+    {
+        $this->expectException(SDKException::class);
+        GETSUnifySDK::getInvoiceStatus(' ', 'AE', 'sandbox', 'sales');
+    }
+
+    public function testInvoiceStatusRequiresExplicitCountry(): void
+    {
+        $this->expectException(SDKException::class);
+        GETSUnifySDK::getInvoiceStatus('doc-123', ' ', 'sandbox', 'sales');
+    }
+
+    public function testInvoiceStatusRequiresExplicitEnvironment(): void
+    {
+        $this->expectException(SDKException::class);
+        GETSUnifySDK::getInvoiceStatus('doc-123', 'AE', ' ', 'sales');
+    }
+
+    public function testInvoiceStatusUsesRevampedEndpointAndAllExplicitInputs(): void
+    {
+        $reflection = new ReflectionClass(GETSUnifySDK::class);
+        $method = $reflection->getMethod('buildInvoiceStatusPath');
         $method->setAccessible(true);
 
         $path = $method->invoke(
             null,
             'doc/123',
             Country::from(Country::AE),
-            'sales'
+            'production',
+            'receipts'
         );
 
         $this->assertSame(
-            '/invoices/doc%2F123/status?country=AE&environment=sandbox&type=sales',
+            '/invoices/doc%2F123/status?country=AE&environment=production&type=receipts',
             $path
         );
     }
 
-    public function testGetDocumentStatusRejectsInvalidType(): void
+    public function testInvoiceStatusRejectsInvalidType(): void
     {
         $this->expectException(SDKException::class);
-        GETSUnifySDK::getDocumentStatus(
-            'doc-123',
-            Country::from(Country::AE),
-            'refunds'
-        );
+        GETSUnifySDK::getInvoiceStatus('doc-123', 'AE', 'sandbox', 'refunds');
+    }
+
+    public function testBothRetrievalResponseShapesAreReturnedUnchanged(): void
+    {
+        $reflection = new ReflectionClass(GETSUnifySDK::class);
+        $method = $reflection->getMethod('decodeJsonResponse');
+        $method->setAccessible(true);
+
+        $legacy = [
+            'success' => true,
+            'data' => [
+                'documentId' => 'legacy-1',
+                'state' => 'final_valid',
+                'isTerminal' => true,
+                'errors' => [],
+            ],
+        ];
+        $revamped = [
+            'status' => 'success',
+            'data' => [
+                'invoiceId' => 'revamped-1',
+                'statuses' => ['document' => 'COMPLIANT'],
+                'isTerminal' => true,
+                'errors' => null,
+            ],
+        ];
+
+        $this->assertSame($legacy, $method->invoke(null, json_encode($legacy)));
+        $this->assertSame($revamped, $method->invoke(null, json_encode($revamped)));
     }
 
     public function testGetSubmissionStatusIsDeprecated(): void

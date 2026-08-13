@@ -121,6 +121,12 @@ class UnifyRequestBuilder
         return $this;
     }
 
+    public function newApi(?bool $newApi): self
+    {
+        $this->request->newApi = $newApi;
+        return $this;
+    }
+
     public function build(): UnifyRequest
     {
         return $this->request;

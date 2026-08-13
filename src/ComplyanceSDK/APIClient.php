@@ -80,6 +80,33 @@ class APIClient
     }
 
     /**
+     * Send an already-shaped Unify request without changing its fields.
+     *
+     * Use this for the legacy batch envelope and for callers that already own
+     * the complete revamped envelope.
+     *
+     * @param array $request Complete Unify request body
+     * @param bool|null $newApi True for revamped, false for legacy, null to omit the selector
+     */
+    public function sendRawUnifyRequest(array $request, ?bool $newApi = null): string
+    {
+        $requestBody = json_encode($request);
+        if ($requestBody === false) {
+            throw new \RuntimeException('Failed to encode Unify request: ' . json_last_error_msg());
+        }
+
+        $headers = [
+            'Authorization: Bearer ' . $this->apiKey,
+            'Content-Type: application/json',
+        ];
+        if ($newApi !== null) {
+            $headers[] = 'new-api: ' . ($newApi ? 'true' : 'false');
+        }
+
+        return $this->sendEncodedRequest($requestBody, $headers);
+    }
+
+    /**
      * Internal method to send UnifyRequest with detailed logging
      * 
      * @param UnifyRequest $request The request to send
@@ -155,13 +182,51 @@ class APIClient
         // Parse response to get status and message for backward compatibility
         $responseData = json_decode($response, true);
         $responseData = is_array($responseData) ? $responseData : [];
-        $status = !empty($responseData['documentId']) || !empty($responseData['payloadId'])
-            ? 'success'
-            : ($responseData['status'] ?? 'unknown');
-        $message = $responseData['message'] ?? 'No message';
+        $legacyResult = null;
+        if (
+            isset($responseData['data']['results'][0]) &&
+            is_array($responseData['data']['results'][0])
+        ) {
+            $legacyResult = $responseData['data']['results'][0];
+        }
+
+        $status = 'unknown';
+        if (!empty($responseData['documentId']) || !empty($responseData['payloadId'])) {
+            $status = 'success';
+        } elseif (is_array($legacyResult) && isset($legacyResult['status'])) {
+            $status = (string)$legacyResult['status'];
+        } elseif (isset($responseData['status'])) {
+            $status = (string)$responseData['status'];
+        }
+
+        $message = isset($responseData['message'])
+            ? (string)$responseData['message']
+            : 'No message';
+        if (
+            $status === 'failed' &&
+            is_array($legacyResult) &&
+            isset($legacyResult['validation']['errors'][0]['message'])
+        ) {
+            $message = (string)$legacyResult['validation']['errors'][0]['message'];
+        } elseif (
+            $status === 'failed' &&
+            is_array($legacyResult) &&
+            isset($legacyResult['errors'][0]['message'])
+        ) {
+            $message = (string)$legacyResult['errors'][0]['message'];
+        }
 
         $submissionResponse = new SubmissionResponse($status, $message);
-        $submissionId = $responseData['documentId'] ?? ($responseData['payloadId'] ?? null);
+        $submissionId = null;
+        if (!empty($responseData['documentId'])) {
+            $submissionId = $responseData['documentId'];
+        } elseif (!empty($responseData['payloadId'])) {
+            $submissionId = $responseData['payloadId'];
+        } elseif (is_array($legacyResult) && !empty($legacyResult['documentId'])) {
+            $submissionId = $legacyResult['documentId'];
+        } elseif (is_array($legacyResult) && !empty($legacyResult['payloadId'])) {
+            $submissionId = $legacyResult['payloadId'];
+        }
         if (is_string($submissionId) && $submissionId !== '') {
             $submissionResponse->setSubmissionId($submissionId);
         }
@@ -203,12 +268,14 @@ class APIClient
      */
     private function makeHttpRequest(UnifyRequest $request): string
     {
-        $requestBody = json_encode(
-            UnifyV3RequestSerializer::serialize($request, $this->environment, $this->debug)
-        );
+        $newApi = $request->getNewApi();
+        $requestData = $newApi === true
+            ? UnifyV3RequestSerializer::serialize($request, $this->environment, $this->debug)
+            : UnifyLegacyRequestSerializer::serialize($request);
+        $requestBody = json_encode($requestData);
 
         if ($requestBody === false) {
-            throw new \RuntimeException('Failed to encode v3 Unify request: ' . json_last_error_msg());
+            throw new \RuntimeException('Failed to encode Unify request: ' . json_last_error_msg());
         }
 
         $headers = [
@@ -222,7 +289,15 @@ class APIClient
         if (isset($request->correlationId) && trim((string)$request->correlationId) !== '') {
             $headers[] = 'X-Correlation-ID: ' . $this->sanitizeHeaderValue((string)$request->correlationId);
         }
+        if ($newApi !== null) {
+            $headers[] = 'new-api: ' . ($newApi ? 'true' : 'false');
+        }
 
+        return $this->sendEncodedRequest($requestBody, $headers);
+    }
+
+    private function sendEncodedRequest(string $requestBody, array $headers): string
+    {
         $result = $this->executeHttpRequest($this->baseUrl, $requestBody, $headers);
         $responseBody = $result['body'];
         $httpCode = $result['status'];

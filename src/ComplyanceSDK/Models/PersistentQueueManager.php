@@ -595,6 +595,7 @@ class PersistentQueueManager
         $request->setTimestamp((string)($data['timestamp'] ?? date('c')));
         $request->setEnv((string)($data['env'] ?? 'sandbox'));
         $request->setCorrelationId(isset($data['correlationId']) ? (string)$data['correlationId'] : null);
+        $request->setNewApi(array_key_exists('new-api', $data) ? (bool)$data['new-api'] : null);
         return $request;
     }
 

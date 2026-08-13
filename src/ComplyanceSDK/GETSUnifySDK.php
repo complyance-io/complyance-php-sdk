@@ -130,6 +130,19 @@ class GETSUnifySDK
     }
 
     /**
+     * Submit a complete Unify request without transforming its structure.
+     *
+     * @param array $request Complete legacy batch or revamped request body
+     * @param bool|null $newApi True for revamped, false for legacy, null to omit the selector
+     * @return string Raw API response JSON
+     */
+    public static function pushRawUnify(array $request, ?bool $newApi = null): string
+    {
+        self::validateConfiguration();
+        return self::$apiClient->sendRawUnifyRequest($request, $newApi);
+    }
+
+    /**
      * Submit a payload to the GETS Unify API.
      * 
      * @param string $clientPayloadJson The raw JSON payload
@@ -201,7 +214,8 @@ class GETSUnifySDK
         Mode $mode,
         Purpose $purpose,
         array $payload,
-        $destinations = null
+        $destinations = null,
+        ?bool $newApi = null
     ) {
         // Log SDK operation start
         error_log("SDK Operation - pushToUnify: " . $sourceName . ":" . $sourceVersion . 
@@ -299,7 +313,8 @@ class GETSUnifySDK
             $mode,
             $purpose,
             $payload,
-            $destinations
+            $destinations,
+            $newApi
         );
     }
 
@@ -312,7 +327,8 @@ class GETSUnifySDK
         Mode $mode,
         Purpose $purpose,
         array $payload,
-        $destinations = null
+        $destinations = null,
+        ?bool $newApi = null
     ) {
         if (self::$config === null) {
             throw \ComplyanceSDK\Exceptions\SDKException::fromErrorDetail(new \ComplyanceSDK\Models\ErrorDetail(
@@ -348,7 +364,8 @@ class GETSUnifySDK
             $purpose,
             $mergedPayload,
             $finalDestinations,
-            $normalized
+            $normalized,
+            $newApi
         );
     }
 
@@ -365,7 +382,8 @@ class GETSUnifySDK
         Mode $mode,
         Purpose $purpose,
         array $payload,
-        $destinations = null
+        $destinations = null,
+        ?bool $newApi = null
     ) {
         return self::pushToUnifyV2(
             $sourceName,
@@ -376,7 +394,8 @@ class GETSUnifySDK
             $mode,
             $purpose,
             $payload,
-            $destinations
+            $destinations,
+            $newApi
         );
     }
 
@@ -404,7 +423,8 @@ class GETSUnifySDK
         Mode $mode,
         Purpose $purpose,
         $jsonPayload,
-        $destinations = null
+        $destinations = null,
+        ?bool $newApi = null
     ) {
         if (empty($jsonPayload) || trim($jsonPayload) === '') {
             throw \ComplyanceSDK\Exceptions\SDKException::fromErrorDetail(new \ComplyanceSDK\Models\ErrorDetail(
@@ -441,7 +461,7 @@ class GETSUnifySDK
 
         return self::pushToUnify(
             $sourceName, $sourceVersion, $logicalType, $country,
-            $operation, $mode, $purpose, $payloadArray, $destinations
+            $operation, $mode, $purpose, $payloadArray, $destinations, $newApi
         );
     }
 
@@ -469,7 +489,8 @@ class GETSUnifySDK
         Mode $mode,
         Purpose $purpose,
         $payloadObject,
-        $destinations = null
+        $destinations = null,
+        ?bool $newApi = null
     ) {
         if ($payloadObject === null) {
             throw \ComplyanceSDK\Exceptions\SDKException::fromErrorDetail(new \ComplyanceSDK\Models\ErrorDetail(
@@ -510,7 +531,7 @@ class GETSUnifySDK
 
             return self::pushToUnify(
                 $sourceName, $sourceVersion, $logicalType, $country,
-                $operation, $mode, $purpose, $payloadArray, $destinations
+                $operation, $mode, $purpose, $payloadArray, $destinations, $newApi
             );
         } catch (\ComplyanceSDK\Exceptions\SDKException $e) {
             throw $e;
@@ -807,6 +828,11 @@ class GETSUnifySDK
             return [];
         }
 
+        return self::decodeJsonResponse($responseBody);
+    }
+
+    private static function decodeJsonResponse(string $responseBody): array
+    {
         $decoded = json_decode($responseBody, true);
         return is_array($decoded) ? $decoded : [];
     }
@@ -1010,19 +1036,12 @@ class GETSUnifySDK
     }
 
     /**
-     * Get invoice status by documentId.
+     * Get the legacy normalized submission status by document ID.
      *
-     * The country argument remains optional in the PHP signature so older calls
-     * receive an actionable SDK validation error instead of an ArgumentCountError.
-     * It is required by the current status API.
-     *
-     * @param string $documentId Document ID returned by the Unify API
-     * @param Country|string|null $country Invoice country
-     * @param string $type Invoice collection type: sales or purchases
-     * @return array
+     * @return array Legacy {success,data} response
      * @throws SDKException
      */
-    public static function getDocumentStatus(string $documentId, $country = null, string $type = 'sales'): array
+    public static function getDocumentStatus(string $documentId): array
     {
         self::validateConfiguration();
 
@@ -1035,38 +1054,85 @@ class GETSUnifySDK
             ));
         }
 
-        return self::getJson(self::buildDocumentStatusPath($normalized, $country, $type));
+        return self::getJson(self::buildDocumentStatusPath($normalized));
     }
 
-    private static function buildDocumentStatusPath(string $documentId, $country, string $type): string
+    private static function buildDocumentStatusPath(string $documentId): string
     {
+        return '/api/v3/documents/' . rawurlencode($documentId) . '/status';
+    }
+
+    /**
+     * Get the revamped invoice-management status snapshot.
+     *
+     * @param string $invoiceId Invoice/document ID
+     * @param Country|string $country Explicit invoice country
+     * @param string $environment Explicit storage environment
+     * @param string $type Explicit collection type: sales, purchases, or receipts
+     * @return array Revamped {status,data} response
+     * @throws SDKException
+     */
+    public static function getInvoiceStatus(
+        string $invoiceId,
+        $country,
+        string $environment,
+        string $type
+    ): array
+    {
+        self::validateConfiguration();
+
+        $normalizedId = trim($invoiceId);
+        if ($normalizedId === '') {
+            throw new ValidationException(
+                'Invoice ID is required for invoice status retrieval',
+                'Pass a non-empty invoice ID to getInvoiceStatus().'
+            );
+        }
+
+        return self::getJson(
+            self::buildInvoiceStatusPath($normalizedId, $country, $environment, $type)
+        );
+    }
+
+    private static function buildInvoiceStatusPath(
+        string $invoiceId,
+        $country,
+        string $environment,
+        string $type
+    ): string {
         $countryCode = $country instanceof Country ? $country->getCode() : (string)$country;
         $countryCode = strtoupper(trim($countryCode));
-        if ($countryCode === '' || !Country::isValid($countryCode)) {
+        if ($countryCode === '') {
             throw new ValidationException(
                 'Country is required for invoice status retrieval',
-                'Pass a valid Country as the second argument to getDocumentStatus().'
+                'Pass the invoice country to getInvoiceStatus().'
+            );
+        }
+
+        $normalizedEnvironment = strtolower(trim($environment));
+        if ($normalizedEnvironment === '') {
+            throw new ValidationException(
+                'Environment is required for invoice status retrieval',
+                'Pass the invoice storage environment to getInvoiceStatus().'
             );
         }
 
         $normalizedType = strtolower(trim($type));
-        if (!in_array($normalizedType, ['sales', 'purchases'], true)) {
+        if (!in_array($normalizedType, ['sales', 'purchases', 'receipts'], true)) {
             throw new ValidationException(
                 'Invalid invoice status type',
-                'Use sales or purchases.'
+                'Use sales, purchases, or receipts.'
             );
         }
 
-        $environment = self::$config->getEnvironment()->getCode() === Environment::PRODUCTION
-            ? Environment::PRODUCTION
-            : Environment::SANDBOX;
-        $query = http_build_query([
+        $queryParameters = [
             'country' => $countryCode,
-            'environment' => $environment,
+            'environment' => $normalizedEnvironment,
             'type' => $normalizedType,
-        ], '', '&', PHP_QUERY_RFC3986);
+        ];
+        $query = http_build_query($queryParameters, '', '&', PHP_QUERY_RFC3986);
 
-        return '/invoices/' . rawurlencode($documentId) . '/status?' . $query;
+        return '/invoices/' . rawurlencode($invoiceId) . '/status?' . $query;
     }
 
     /**
@@ -1082,12 +1148,12 @@ class GETSUnifySDK
         throw new SDKException(new \ComplyanceSDK\Models\ErrorDetail(
             \ComplyanceSDK\Enums\ErrorCode::INVALID_ARGUMENT,
             'submissionId status retrieval is no longer supported',
-            'Use getDocumentStatus(documentId, country, type) for invoice status retrieval.'
+            'Use getDocumentStatus(documentId) or getInvoiceStatus(invoiceId, country, environment, type).'
         ));
     }
 
     /**
-     * @deprecated Use getDocumentStatus(documentId, country, type).
+     * @deprecated Use getDocumentStatus(documentId).
      *
      * @param string $submissionId Submission ID
      * @return array
@@ -1391,7 +1457,8 @@ class GETSUnifySDK
         Mode $mode,
         Purpose $purpose,
         array $payload,
-        ?array $destinations = null
+        ?array $destinations = null,
+        ?bool $newApi = null
     ) {
         if (self::$config === null) {
             throw \ComplyanceSDK\Exceptions\SDKException::fromErrorDetail(new \ComplyanceSDK\Models\ErrorDetail(
@@ -1507,7 +1574,9 @@ class GETSUnifySDK
             $mode, 
             $purpose, 
             $mergedPayload, 
-            $finalDestinations
+            $finalDestinations,
+            null,
+            $newApi
         );
     }
 
@@ -1696,7 +1765,8 @@ class GETSUnifySDK
         Purpose $purpose,
         array $payload,
         array $destinations,
-        ?GetsDocumentTypeV2 $documentTypeV2 = null
+        ?GetsDocumentTypeV2 $documentTypeV2 = null,
+        ?bool $newApi = null
     ) {
         // Build UnifyRequest with custom document type string
         $requestBuilder = UnifyRequestBuilder::builder()
@@ -1713,7 +1783,8 @@ class GETSUnifySDK
             ->requestId("req_" . (time() * 1000) . "_" . mt_rand())
             ->timestamp(date('c'))
             ->env(strtolower(self::$config->getEnvironment()->getCode()))
-            ->correlationId(self::$config->getCorrelationId());
+            ->correlationId(self::$config->getCorrelationId())
+            ->newApi($newApi);
 
         if ($documentTypeV2 !== null) {
             $requestBuilder->documentTypeV2($documentTypeV2->toArray());
