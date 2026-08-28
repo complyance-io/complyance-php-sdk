@@ -143,6 +143,18 @@ class GETSUnifySDK
     }
 
     /**
+     * Submit an ordered set of typed invoices through the revamped bulk API.
+     * Existing single-invoice and legacy APIs are unchanged.
+     *
+     * @param UnifyRequest[] $requests Ordered invoice requests (maximum 10)
+     */
+    public static function pushRevampedBulkToUnify(array $requests): UnifyBulkResponse
+    {
+        self::validateConfiguration();
+        return self::$apiClient->sendRevampedBulkUnifyRequest($requests);
+    }
+
+    /**
      * Submit a payload to the GETS Unify API.
      * 
      * @param string $clientPayloadJson The raw JSON payload

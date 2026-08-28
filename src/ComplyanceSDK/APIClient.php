@@ -107,6 +107,46 @@ class APIClient
     }
 
     /**
+     * Submit multiple typed invoices through the revamped Unify bulk contract.
+     *
+     * @param UnifyRequest[] $requests Ordered invoice requests (maximum 10)
+     */
+    public function sendRevampedBulkUnifyRequest(array $requests): UnifyBulkResponse
+    {
+        $requestCount = count($requests);
+        if ($requestCount === 0) {
+            throw new \InvalidArgumentException('At least one UnifyRequest is required.');
+        }
+        if ($requestCount > 10) {
+            throw new \InvalidArgumentException('A maximum of 10 UnifyRequest objects is allowed.');
+        }
+
+        $invoices = [];
+        $expectedPosition = 0;
+        foreach ($requests as $position => $request) {
+            if ($position !== $expectedPosition) {
+                throw new \InvalidArgumentException(
+                    'Bulk Unify requests must use consecutive zero-based indexes.'
+                );
+            }
+            if (!$request instanceof UnifyRequest) {
+                throw new \InvalidArgumentException(
+                    "Bulk request item {$position} must be an instance of UnifyRequest."
+                );
+            }
+            $invoices[] = UnifyV3RequestSerializer::serialize(
+                $request,
+                $this->environment,
+                $this->debug
+            );
+            $expectedPosition++;
+        }
+
+        $responseBody = $this->sendRawUnifyRequest(['invoices' => $invoices], true);
+        return UnifyBulkResponse::fromJson($responseBody);
+    }
+
+    /**
      * Internal method to send UnifyRequest with detailed logging
      * 
      * @param UnifyRequest $request The request to send

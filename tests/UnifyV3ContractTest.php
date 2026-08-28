@@ -15,6 +15,7 @@ use ComplyanceSDK\Models\SDKConfig;
 use ComplyanceSDK\Models\Source;
 use ComplyanceSDK\UnifyRequest;
 use ComplyanceSDK\UnifyLegacyRequestSerializer;
+use ComplyanceSDK\UnifyBulkResponse;
 use ComplyanceSDK\UnifyV3RequestSerializer;
 use PHPUnit\Framework\TestCase;
 
@@ -400,6 +401,146 @@ final class UnifyV3ContractTest extends TestCase
         $this->assertSame('http://127.0.0.1:4000/api/v3/unify', $client->capturedUrl);
         $this->assertSame($revamped, json_decode($client->capturedBody, true));
         $this->assertContains('new-api: true', $client->capturedHeaders);
+    }
+
+    public function testRevampedBulkReturnsOrderedSuccessResults(): void
+    {
+        $client = new CapturingV3APIClient(
+            'configured-api-key',
+            Environment::from(Environment::LOCAL)
+        );
+        $client->responseBody = json_encode([
+            'summary' => ['total' => 2, 'succeeded' => 2, 'failed' => 0],
+            'results' => [
+                [
+                    'index' => 0,
+                    'success' => true,
+                    'result' => [
+                        'documentId' => 'document-1',
+                        'message' => 'First invoice validated.',
+                        'Base64XML' => 'PEludm9pY2UgLz4=',
+                    ],
+                ],
+                [
+                    'index' => 1,
+                    'success' => true,
+                    'result' => [
+                        'documentId' => 'document-2',
+                        'message' => 'Second invoice validated.',
+                        'Base64XML' => 'PEludm9pY2UgLz4=',
+                    ],
+                ],
+            ],
+        ]);
+
+        $response = $client->sendRevampedBulkUnifyRequest([
+            $this->buildRequest(['invoice_data' => ['document_number' => 'INV-001']]),
+            $this->buildRequest(['invoice_data' => ['document_number' => 'INV-002']]),
+        ]);
+
+        $this->assertInstanceOf(UnifyBulkResponse::class, $response);
+        $this->assertSame(2, $response->getTotal());
+        $this->assertSame(2, $response->getSucceeded());
+        $this->assertSame(0, $response->getFailed());
+        $this->assertSame(0, $response->getResults()[0]->getIndex());
+        $this->assertSame('document-1', $response->getResults()[0]->getResult()['documentId']);
+        $this->assertSame(1, $response->getResults()[1]->getIndex());
+        $this->assertSame('document-2', $response->getResults()[1]->getResult()['documentId']);
+        $this->assertContains('new-api: true', $client->capturedHeaders);
+        $this->assertSame(
+            ['INV-001', 'INV-002'],
+            array_map(
+                static function (array $invoice): string {
+                    return $invoice['payload']['invoice_data']['document_number'];
+                },
+                json_decode($client->capturedBody, true)['invoices']
+            )
+        );
+    }
+
+    public function testRevampedBulkExposesValidationFailure(): void
+    {
+        $client = new CapturingV3APIClient(
+            'configured-api-key',
+            Environment::from(Environment::LOCAL)
+        );
+        $validationErrors = [[
+            'code' => 'IBR-015',
+            'message' => 'Amount due is required.',
+            'getsPath' => 'totals.amountDue',
+        ]];
+        $client->responseBody = json_encode([
+            'summary' => ['total' => 1, 'succeeded' => 0, 'failed' => 1],
+            'results' => [[
+                'index' => 0,
+                'success' => false,
+                'result' => [
+                    'documentId' => 'document-invalid',
+                    'message' => 'Invoice validation failed.',
+                    'errors' => $validationErrors,
+                ],
+            ]],
+        ]);
+
+        $response = $client->sendRevampedBulkUnifyRequest([$this->buildRequest([])]);
+        $result = $response->getResults()[0];
+
+        $this->assertFalse($result->isSuccess());
+        $this->assertTrue($result->isValidationFailure());
+        $this->assertFalse($result->isProcessingFailure());
+        $this->assertSame($validationErrors, $result->getResult()['errors']);
+        $this->assertNull($result->getError());
+    }
+
+    public function testRevampedBulkExposesProcessingFailure(): void
+    {
+        $client = new CapturingV3APIClient(
+            'configured-api-key',
+            Environment::from(Environment::LOCAL)
+        );
+        $processingError = [
+            'code' => 'not_found',
+            'message' => 'Source mapping was not found.',
+        ];
+        $client->responseBody = json_encode([
+            'summary' => ['total' => 1, 'succeeded' => 0, 'failed' => 1],
+            'results' => [[
+                'index' => 0,
+                'success' => false,
+                'error' => $processingError,
+            ]],
+        ]);
+
+        $response = $client->sendRevampedBulkUnifyRequest([$this->buildRequest([])]);
+        $result = $response->getResults()[0];
+
+        $this->assertFalse($result->isSuccess());
+        $this->assertFalse($result->isValidationFailure());
+        $this->assertTrue($result->isProcessingFailure());
+        $this->assertNull($result->getResult());
+        $this->assertSame($processingError, $result->getError());
+    }
+
+    public function testRevampedBulkRejectsOutOfOrderResults(): void
+    {
+        $client = new CapturingV3APIClient(
+            'configured-api-key',
+            Environment::from(Environment::LOCAL)
+        );
+        $client->responseBody = json_encode([
+            'summary' => ['total' => 2, 'succeeded' => 2, 'failed' => 0],
+            'results' => [
+                ['index' => 1, 'success' => true, 'result' => ['documentId' => 'document-2']],
+                ['index' => 0, 'success' => true, 'result' => ['documentId' => 'document-1']],
+            ],
+        ]);
+
+        $this->expectException(UnexpectedValueException::class);
+        $this->expectExceptionMessage('request order');
+        $client->sendRevampedBulkUnifyRequest([
+            $this->buildRequest(['invoice_data' => ['document_number' => 'INV-001']]),
+            $this->buildRequest(['invoice_data' => ['document_number' => 'INV-002']]),
+        ]);
     }
 
     public function testSerializerNormalizesProductionAndLegacyDocumentType(): void

@@ -13,12 +13,6 @@
             <exclude>tests/Integration</exclude>
             <exclude>tests/Performance</exclude>
         </testsuite>
-        <testsuite name="Integration">
-            <directory>tests/Integration</directory>
-        </testsuite>
-        <testsuite name="Performance">
-            <directory>tests/Performance</directory>
-        </testsuite>
         <testsuite name="All">
             <directory>tests</directory>
         </testsuite>

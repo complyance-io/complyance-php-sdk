@@ -1,0 +1,54 @@
+Retrieval Status
+ [x] Get document status requires document id
+ [x] Document status uses legacy endpoint without query
+ [x] Invoice status requires invoice id
+ [x] Invoice status requires explicit country
+ [x] Invoice status requires explicit environment
+ [x] Invoice status uses revamped endpoint and all explicit inputs
+ [x] Invoice status rejects invalid type
+ [x] Both retrieval response shapes are returned unchanged
+ [x] Get submission status is deprecated
+ [x] Get status alias is deprecated
+ [x] Submit payload requires payload
+ [x] Submit payload rejects unknown source
+ [x] Submit payload returns mocked success with valid source
+ [x] Push to unify from json rejects empty payload
+ [x] Push to unify from json rejects malformed payload
+ [x] Push to unify rejects blank source for invoicing purpose
+ [x] Verify webhook signature accepts valid signature
+ [x] Verify webhook signature rejects unsupported algorithm
+
+Unify V3Contract
+ [x] Client sends canonical v 3 request
+ [x] Missing selector sends legacy request to v 3 endpoint
+ [x] False selector sends legacy request and explicit query
+ [x] Typed legacy serializer preserves explicit destinations
+ [x] Typed legacy serializer rejects missing or malformed authoritative fields with data set "country is missing"
+ [x] Typed legacy serializer rejects missing or malformed authoritative fields with data set "environment is unsupported"
+ [x] Typed legacy serializer rejects missing or malformed authoritative fields with data set "source version is missing"
+ [x] Typed legacy serializer rejects missing or malformed authoritative fields with data set "document type base is missing"
+ [x] Typed legacy serializer rejects missing or malformed authoritative fields with data set "modifiers are not an array"
+ [x] Typed legacy serializer rejects missing or malformed authoritative fields with data set "payload is a list"
+ [x] Typed legacy validation failure response remains raw and observable
+ [x] Typed legacy top level error response remains raw and observable
+ [x] Typed legacy http error exposes raw response body in exception
+ [x] Raw legacy batch request is sent without transformation
+ [x] Raw legacy batch preserves exact contract and raw response
+ [x] Raw revamped request uses header and preserves body
+ [x] Revamped bulk returns ordered success results
+ [x] Revamped bulk exposes validation failure
+ [x] Revamped bulk exposes processing failure
+ [x] Revamped bulk rejects out of order results
+ [x] Serializer normalizes production and legacy document type
+ [x] Serializer omits empty source for mapping
+ [x] Serializer rejects list payload
+ [x] Legacy send payload understands v 3 success
+ [x] Legacy send payload maps simplified invoice base
+ [x] Legacy send payload understands nested batch success
+ [x] Legacy send payload exposes nested validation failure
+ [x] Legacy send payload maps self billed modifier
+ [x] Legacy send payload rejects ambiguous document type
+ [x] Debug configuration round trips
+ [x] Queue rebuilds v 2 document type without string casting
+ [x] Queue recognizes v 3 success responses
+
