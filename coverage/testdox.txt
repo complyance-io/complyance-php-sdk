@@ -29,8 +29,9 @@ Unify V3Contract
  [x] Typed legacy serializer rejects missing or malformed authoritative fields with data set "document type base is missing"
  [x] Typed legacy serializer rejects missing or malformed authoritative fields with data set "modifiers are not an array"
  [x] Typed legacy serializer rejects missing or malformed authoritative fields with data set "payload is a list"
- [x] Typed legacy validation failure response remains raw and observable
- [x] Typed legacy top level error response remains raw and observable
+ [x] Typed legacy validation failure is projected to historical shape
+ [x] Typed legacy top level error is projected to historical shape
+ [x] Typed legacy processing failure is projected to historical error
  [x] Typed legacy http error exposes raw response body in exception
  [x] Raw legacy batch request is sent without transformation
  [x] Raw legacy batch preserves exact contract and raw response

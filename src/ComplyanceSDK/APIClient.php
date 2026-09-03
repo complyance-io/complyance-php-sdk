@@ -107,6 +107,231 @@ class APIClient
     }
 
     /**
+     * Project the v3 legacy batch response back to the historical single-document
+     * /unify response consumed by typed SDK clients.
+     */
+    private function projectLegacySingleResponse(string $responseBody, UnifyRequest $request): string
+    {
+        $response = json_decode($responseBody, true);
+        if (!is_array($response)) {
+            throw new \UnexpectedValueException('Legacy Unify response must be a JSON object.');
+        }
+        if (!isset($response['status']) || !is_string($response['status'])) {
+            throw new \UnexpectedValueException('Legacy Unify response must contain status.');
+        }
+        if (!isset($response['message']) || !is_string($response['message'])) {
+            throw new \UnexpectedValueException('Legacy Unify response must contain message.');
+        }
+
+        $projected = ['status' => $response['status']];
+
+        if ($response['status'] === 'error') {
+            if (!isset($response['code']) || !is_string($response['code'])) {
+                throw new \UnexpectedValueException('Legacy Unify error response must contain code.');
+            }
+            $projected['message'] = $response['message'];
+            $projected['error'] = [
+                'code' => $response['code'],
+                'message' => $response['message'],
+            ];
+
+            return $this->encodeProjectedLegacyResponse($projected);
+        }
+
+        if (
+            !isset($response['data']) ||
+            !is_array($response['data']) ||
+            !isset($response['data']['results']) ||
+            !is_array($response['data']['results']) ||
+            count($response['data']['results']) !== 1 ||
+            !is_array($response['data']['results'][0])
+        ) {
+            throw new \UnexpectedValueException(
+                'Typed legacy Unify response must contain exactly one result.'
+            );
+        }
+
+        $result = $response['data']['results'][0];
+        $validationRejected =
+            isset($result['validation']) &&
+            is_array($result['validation']) &&
+            array_key_exists('success', $result['validation']) &&
+            $result['validation']['success'] === false;
+
+        if (
+            isset($result['status']) &&
+            $result['status'] === 'failed' &&
+            !$validationRejected
+        ) {
+            if (
+                !isset($result['errors']) ||
+                !is_array($result['errors']) ||
+                !isset($result['errors'][0]) ||
+                !is_array($result['errors'][0]) ||
+                !isset($result['errors'][0]['code']) ||
+                !is_string($result['errors'][0]['code']) ||
+                !isset($result['errors'][0]['message']) ||
+                !is_string($result['errors'][0]['message'])
+            ) {
+                throw new \UnexpectedValueException(
+                    'Failed legacy Unify result must contain an explicit error.'
+                );
+            }
+
+            return $this->encodeProjectedLegacyResponse([
+                'status' => 'error',
+                'message' => $result['errors'][0]['message'],
+                'error' => [
+                    'code' => $result['errors'][0]['code'],
+                    'message' => $result['errors'][0]['message'],
+                ],
+            ]);
+        }
+
+        $requestPurpose = $request->getPurpose();
+        if (!is_string($requestPurpose) || trim($requestPurpose) === '') {
+            throw new \UnexpectedValueException(
+                'Typed legacy Unify request must contain an explicit purpose.'
+            );
+        }
+        $purpose = strtolower(trim($requestPurpose));
+        if ($validationRejected) {
+            $projected['message'] = 'Validation rejected';
+        } elseif ($purpose === strtolower(Purpose::INVOICING)) {
+            $projected['message'] = 'Accepted for processing';
+        } elseif ($purpose === strtolower(Purpose::MAPPING)) {
+            $projected['message'] = 'Unify processing completed successfully';
+        } else {
+            throw new \UnexpectedValueException('Typed legacy Unify purpose is unsupported.');
+        }
+
+        $data = [];
+
+        $source = [];
+        if (array_key_exists('sourceid', $result)) {
+            $source['sourceid'] = $result['sourceid'];
+        }
+        if (isset($request->source) && is_array($request->source)) {
+            if (isset($request->source['name']) && is_string($request->source['name'])) {
+                $source['id'] = $request->source['name'];
+            }
+        }
+        if ($source !== []) {
+            $data['source'] = $source;
+        }
+
+        $payload = [];
+        if (isset($result['payloadId']) && is_string($result['payloadId'])) {
+            $payload['payloadId'] = $result['payloadId'];
+        }
+        if (isset($result['payloadAnalysis']) && is_array($result['payloadAnalysis'])) {
+            $payload['analysis'] = $result['payloadAnalysis'];
+        }
+        if ($payload !== []) {
+            $data['payload'] = $payload;
+        }
+
+        if (isset($result['templateId']) && is_string($result['templateId'])) {
+            $data['template'] = ['templateId' => $result['templateId']];
+        }
+
+        $document = [];
+        if (isset($result['documentId']) && is_string($result['documentId'])) {
+            $document['documentId'] = $result['documentId'];
+        }
+        if (isset($result['documentNumber']) && is_string($result['documentNumber'])) {
+            $document['documentNumber'] = $result['documentNumber'];
+        }
+        if (isset($result['submission']) && is_array($result['submission'])) {
+            if (isset($result['submission']['state']) && is_string($result['submission']['state'])) {
+                if ($result['submission']['state'] === 'submitted') {
+                    $document['status'] = 'SUBMITTED';
+                } elseif ($result['submission']['state'] === 'rejected') {
+                    $document['status'] = 'REJECTED';
+                }
+            }
+        }
+        if ($document !== []) {
+            $data['document'] = $document;
+        }
+
+        foreach (['compliance', 'validation'] as $field) {
+            if (array_key_exists($field, $result)) {
+                $data[$field] = $result[$field];
+            }
+        }
+
+        if (isset($result['submission']) && is_array($result['submission'])) {
+            if (
+                !array_key_exists('success', $result['submission']) ||
+                !is_bool($result['submission']['success'])
+            ) {
+                throw new \UnexpectedValueException(
+                    'Legacy Unify submission must contain an explicit success value.'
+                );
+            }
+
+            $historicalSubmission = ['success' => $result['submission']['success']];
+            $governmentResponse = [];
+            if (isset($result['documentId']) && is_string($result['documentId'])) {
+                $governmentResponse['documentId'] = $result['documentId'];
+            }
+            if (
+                isset($result['submission']['state']) &&
+                is_string($result['submission']['state'])
+            ) {
+                $governmentResponse['state'] = $result['submission']['state'];
+            }
+            if (isset($result['country']) && is_string($result['country'])) {
+                $governmentResponse['country'] = $result['country'];
+            }
+            if (isset($request->env) && is_string($request->env)) {
+                $governmentResponse['environment'] = $request->env;
+            }
+            if ($governmentResponse !== []) {
+                $historicalSubmission['governmentResponse'] = $governmentResponse;
+            }
+            if (
+                isset($result['submission']['submittedAt']) &&
+                is_string($result['submission']['submittedAt'])
+            ) {
+                $historicalSubmission['submittedAt'] = $result['submission']['submittedAt'];
+            }
+            $data['submission'] = $historicalSubmission;
+        }
+
+        if (isset($response['requestId']) && is_string($response['requestId'])) {
+            $data['processing'] = ['requestId' => $response['requestId']];
+        }
+        $projected['data'] = $data;
+
+        $metadata = [];
+        if (isset($response['requestId']) && is_string($response['requestId'])) {
+            $metadata['requestId'] = $response['requestId'];
+        }
+        if (isset($response['timestamp']) && is_string($response['timestamp'])) {
+            $metadata['timestamp'] = $response['timestamp'];
+        }
+        if ($metadata !== []) {
+            $projected['metadata'] = $metadata;
+        }
+
+        return $this->encodeProjectedLegacyResponse($projected);
+    }
+
+    private function encodeProjectedLegacyResponse(array $response): string
+    {
+        $encoded = json_encode($response);
+        if ($encoded === false) {
+            throw new \RuntimeException(
+                'Failed to encode historical Unify response: ' . json_last_error_msg()
+            );
+        }
+
+        return $encoded;
+    }
+
+    /**
      * Submit multiple typed invoices through the revamped Unify bulk contract.
      *
      * @param UnifyRequest[] $requests Ordered invoice requests (maximum 10)
@@ -219,53 +444,36 @@ class APIClient
 
         $response = $this->sendUnifyRequest($request);
         
-        // Parse response to get status and message for backward compatibility
+        // Parse the projected historical /unify response.
         $responseData = json_decode($response, true);
-        $responseData = is_array($responseData) ? $responseData : [];
-        $legacyResult = null;
-        if (
-            isset($responseData['data']['results'][0]) &&
-            is_array($responseData['data']['results'][0])
-        ) {
-            $legacyResult = $responseData['data']['results'][0];
+        if (!is_array($responseData)) {
+            throw new \UnexpectedValueException('Historical Unify response must be a JSON object.');
+        }
+        if (!isset($responseData['status']) || !is_string($responseData['status'])) {
+            throw new \UnexpectedValueException('Historical Unify response must contain status.');
+        }
+        if (!isset($responseData['message']) || !is_string($responseData['message'])) {
+            throw new \UnexpectedValueException('Historical Unify response must contain message.');
         }
 
-        $status = 'unknown';
-        if (!empty($responseData['documentId']) || !empty($responseData['payloadId'])) {
-            $status = 'success';
-        } elseif (is_array($legacyResult) && isset($legacyResult['status'])) {
-            $status = (string)$legacyResult['status'];
-        } elseif (isset($responseData['status'])) {
-            $status = (string)$responseData['status'];
-        }
-
-        $message = isset($responseData['message'])
-            ? (string)$responseData['message']
-            : 'No message';
+        $status = $responseData['status'];
+        $message = $responseData['message'];
         if (
-            $status === 'failed' &&
-            is_array($legacyResult) &&
-            isset($legacyResult['validation']['errors'][0]['message'])
+            isset($responseData['data']['validation']['success']) &&
+            $responseData['data']['validation']['success'] === false
         ) {
-            $message = (string)$legacyResult['validation']['errors'][0]['message'];
-        } elseif (
-            $status === 'failed' &&
-            is_array($legacyResult) &&
-            isset($legacyResult['errors'][0]['message'])
-        ) {
-            $message = (string)$legacyResult['errors'][0]['message'];
+            $status = 'failed';
+            if (isset($responseData['data']['validation']['errors'][0]['message'])) {
+                $message = (string)$responseData['data']['validation']['errors'][0]['message'];
+            }
         }
 
         $submissionResponse = new SubmissionResponse($status, $message);
         $submissionId = null;
-        if (!empty($responseData['documentId'])) {
-            $submissionId = $responseData['documentId'];
-        } elseif (!empty($responseData['payloadId'])) {
-            $submissionId = $responseData['payloadId'];
-        } elseif (is_array($legacyResult) && !empty($legacyResult['documentId'])) {
-            $submissionId = $legacyResult['documentId'];
-        } elseif (is_array($legacyResult) && !empty($legacyResult['payloadId'])) {
-            $submissionId = $legacyResult['payloadId'];
+        if (isset($responseData['data']['document']['documentId'])) {
+            $submissionId = $responseData['data']['document']['documentId'];
+        } elseif (isset($responseData['data']['payload']['payloadId'])) {
+            $submissionId = $responseData['data']['payload']['payloadId'];
         }
         if (is_string($submissionId) && $submissionId !== '') {
             $submissionResponse->setSubmissionId($submissionId);
@@ -333,7 +541,12 @@ class APIClient
             $headers[] = 'new-api: ' . ($newApi ? 'true' : 'false');
         }
 
-        return $this->sendEncodedRequest($requestBody, $headers);
+        $responseBody = $this->sendEncodedRequest($requestBody, $headers);
+        if ($newApi === true) {
+            return $responseBody;
+        }
+
+        return $this->projectLegacySingleResponse($responseBody, $request);
     }
 
     private function sendEncodedRequest(string $requestBody, array $headers): string

@@ -24,7 +24,7 @@ final class CapturingV3APIClient extends APIClient
     public $capturedUrl;
     public $capturedBody;
     public $capturedHeaders;
-    public $responseBody = '{"documentId":"doc-1","message":"Your invoice was validated."}';
+    public $responseBody = '{"status":"success","code":"OK","message":"Accepted for processing","requestId":"request-1","timestamp":"2026-09-03T10:00:00.000Z","data":{"summary":{"total":1,"success":1,"failed":0},"results":[{"status":"success","country":"AE","sourceid":"source-1","payloadId":"payload-1","documentId":"doc-1","documentNumber":"INV-001","templateId":"template-1","validation":{"success":true,"errors":[]},"submission":{"success":true,"state":"submitted","errors":[],"submittedAt":"2026-09-03T10:00:00.000Z"},"errors":[]}]},"errors":[]}';
     public $responseStatus = 200;
 
     protected function executeHttpRequest(string $url, string $body, array $headers): array
@@ -58,6 +58,7 @@ final class UnifyV3ContractTest extends TestCase
         ];
         $request = $this->buildRequest($payload);
         $request->setNewApi(true);
+        $client->responseBody = '{"documentId":"doc-1","message":"Your invoice was validated."}';
 
         $response = $client->sendUnifyRequest($request);
 
@@ -100,7 +101,7 @@ final class UnifyV3ContractTest extends TestCase
         );
         $request = $this->buildRequest(['invoice_data' => ['document_number' => 'INV-LEGACY']]);
 
-        $client->sendUnifyRequest($request);
+        $response = json_decode($client->sendUnifyRequest($request), true);
 
         $this->assertSame('http://127.0.0.1:4000/api/v3/unify', $client->capturedUrl);
         $body = json_decode($client->capturedBody, true);
@@ -126,6 +127,26 @@ final class UnifyV3ContractTest extends TestCase
         $this->assertArrayNotHasKey('new-api', $body);
         $this->assertNotContains('new-api: true', $client->capturedHeaders);
         $this->assertNotContains('new-api: false', $client->capturedHeaders);
+        $this->assertSame('doc-1', $response['data']['document']['documentId']);
+        $this->assertSame('SUBMITTED', $response['data']['document']['status']);
+        $this->assertSame(true, $response['data']['submission']['success']);
+        $this->assertSame(
+            [
+                'documentId' => 'doc-1',
+                'state' => 'submitted',
+                'country' => 'AE',
+                'environment' => 'sandbox',
+            ],
+            $response['data']['submission']['governmentResponse']
+        );
+        $this->assertSame(
+            '2026-09-03T10:00:00.000Z',
+            $response['data']['submission']['submittedAt']
+        );
+        $this->assertArrayNotHasKey('state', $response['data']['submission']);
+        $this->assertArrayNotHasKey('errors', $response['data']['submission']);
+        $this->assertSame('request-1', $response['metadata']['requestId']);
+        $this->assertArrayNotHasKey('results', $response['data']);
     }
 
     public function testFalseSelectorSendsLegacyRequestAndExplicitQuery(): void
@@ -137,7 +158,7 @@ final class UnifyV3ContractTest extends TestCase
         $request = $this->buildRequest([]);
         $request->setNewApi(false);
 
-        $client->sendUnifyRequest($request);
+        $response = json_decode($client->sendUnifyRequest($request), true);
 
         $this->assertSame('http://127.0.0.1:4000/api/v3/unify', $client->capturedUrl);
         $this->assertContains('new-api: false', $client->capturedHeaders);
@@ -148,6 +169,8 @@ final class UnifyV3ContractTest extends TestCase
         $this->assertArrayHasKey('invoices', $body);
         $this->assertArrayNotHasKey('operation', $body);
         $this->assertArrayNotHasKey('new-api', $body);
+        $this->assertSame('doc-1', $response['data']['document']['documentId']);
+        $this->assertArrayNotHasKey('results', $response['data']);
     }
 
     public function testTypedLegacySerializerPreservesExplicitDestinations(): void
@@ -204,7 +227,7 @@ final class UnifyV3ContractTest extends TestCase
         ];
     }
 
-    public function testTypedLegacyValidationFailureResponseRemainsRawAndObservable(): void
+    public function testTypedLegacyValidationFailureIsProjectedToHistoricalShape(): void
     {
         $client = new CapturingV3APIClient(
             'configured-api-key',
@@ -213,6 +236,7 @@ final class UnifyV3ContractTest extends TestCase
         $validationFailure = [
             'status' => 'success',
             'code' => 'OK',
+            'message' => 'Accepted for processing',
             'data' => [
                 'summary' => ['total' => 1, 'success' => 0, 'failed' => 1],
                 'results' => [[
@@ -230,10 +254,18 @@ final class UnifyV3ContractTest extends TestCase
 
         $raw = $client->sendUnifyRequest($this->buildRequest([]));
 
-        $this->assertSame($validationFailure, json_decode($raw, true));
+        $projected = json_decode($raw, true);
+        $this->assertSame('success', $projected['status']);
+        $this->assertSame('Validation rejected', $projected['message']);
+        $this->assertFalse($projected['data']['validation']['success']);
+        $this->assertSame(
+            'AE-MANDATORY-012',
+            $projected['data']['validation']['errors'][0]['code']
+        );
+        $this->assertArrayNotHasKey('results', $projected['data']);
     }
 
-    public function testTypedLegacyTopLevelErrorResponseRemainsRawAndObservable(): void
+    public function testTypedLegacyTopLevelErrorIsProjectedToHistoricalShape(): void
     {
         $client = new CapturingV3APIClient(
             'configured-api-key',
@@ -253,7 +285,48 @@ final class UnifyV3ContractTest extends TestCase
 
         $raw = $client->sendUnifyRequest($this->buildRequest([]));
 
-        $this->assertSame($topLevelError, json_decode($raw, true));
+        $this->assertSame([
+            'status' => 'error',
+            'message' => 'Request validation failed',
+            'error' => [
+                'code' => 'VALIDATION_ERROR',
+                'message' => 'Request validation failed',
+            ],
+        ], json_decode($raw, true));
+    }
+
+    public function testTypedLegacyProcessingFailureIsProjectedToHistoricalError(): void
+    {
+        $client = new CapturingV3APIClient(
+            'configured-api-key',
+            Environment::from(Environment::LOCAL)
+        );
+        $client->responseBody = json_encode([
+            'status' => 'success',
+            'code' => 'OK',
+            'message' => 'Accepted for processing',
+            'data' => [
+                'summary' => ['total' => 1, 'success' => 0, 'failed' => 1],
+                'results' => [[
+                    'status' => 'failed',
+                    'errors' => [[
+                        'code' => 'SOURCE_NOT_FOUND',
+                        'message' => 'Source mapping was not found.',
+                    ]],
+                ]],
+            ],
+            'errors' => [],
+        ]);
+
+        $response = json_decode(
+            $client->sendUnifyRequest($this->buildRequest([])),
+            true
+        );
+
+        $this->assertSame('error', $response['status']);
+        $this->assertSame('Source mapping was not found.', $response['message']);
+        $this->assertSame('SOURCE_NOT_FOUND', $response['error']['code']);
+        $this->assertArrayNotHasKey('data', $response);
     }
 
     public function testTypedLegacyHttpErrorExposesRawResponseBodyInException(): void
